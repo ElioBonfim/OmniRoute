@@ -7,10 +7,12 @@ export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
+  '[contenteditable="true"][role="textbox"]',
 ].join(", ");
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
   'button[aria-haspopup="menu"][data-tone="neutral"]',
   'button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]',
+  'button[aria-haspopup="menu"]',
 ].join(", ");
 export const CHATGPT_EFFORT_MENU_SELECTOR = [
   '[data-testid="composer-intelligence-picker-content"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
@@ -111,7 +113,7 @@ export async function detectChatGptAccountCapabilities(
   const composerForm = composer.locator("xpath=ancestor::form[1]");
   const effortButton = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
   const deadline = Date.now() + (options.selectorTimeoutMs ?? 30_000);
-  const stableAbsenceMs = options.stableAbsenceMs ?? 3_000;
+  const stableAbsenceMs = options.stableAbsenceMs ?? 12_000;
   let absenceSince: number | undefined;
   let presenceObservations = 0;
   while (true) {
