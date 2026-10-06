@@ -58,6 +58,7 @@ import {
   compileChatGptWebPrompt,
 } from "../../open-sse/vendor/codex-chatgpt-web/adapters/chatgpt-web/prompt.ts";
 import { parseRequest } from "../../open-sse/vendor/codex-chatgpt-web/responses/parser.ts";
+import { parseChatGptEffortStepperState } from "../../open-sse/vendor/codex-chatgpt-web/chatgpt-session.ts";
 import {
   expandPreviousResponseInput,
   rememberResponseState,
@@ -333,6 +334,20 @@ test("cookie-header storage state satisfies Playwright cookie requirements", () 
 test("explicit Responses reasoning effort is read for mismatch preflight", () => {
   assert.equal(reasoningEffortOf({ reasoning: { effort: "high" } }), "high");
   assert.equal(reasoningEffortOf({ reasoning_effort: "xhigh" }), "xhigh");
+});
+
+test("current ChatGPT keyboard effort status is parsed across supported locales", () => {
+  assert.deepEqual(parseChatGptEffortStepperState("Medium, 2 of 5."), {
+    min: 1,
+    max: 5,
+    value: 2,
+  });
+  assert.deepEqual(parseChatGptEffortStepperState("Média, 2 de 5."), {
+    min: 1,
+    max: 5,
+    value: 2,
+  });
+  assert.equal(parseChatGptEffortStepperState("GPT-5.6 Sol"), undefined);
 });
 
 test("Codex detection requires originator or Codex User-Agent", () => {

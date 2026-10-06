@@ -65,6 +65,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   detectChatGptAccountCapabilities,
   parseChatGptEffortSliderState,
+  parseChatGptEffortStepperState,
 } from "../../chatgpt-session";
 import { loginVerificationMarkerPath } from "../../browser-login";
 import {
@@ -1967,11 +1968,16 @@ export class ChatGptBrowserWorker {
       waitAbort.abort();
     }
     if (ready === "slider") {
-      let sliderState = parseChatGptEffortSliderState(
-        await effortSlider.getAttribute("aria-valuemin"),
-        await effortSlider.getAttribute("aria-valuemax"),
-        await effortSlider.getAttribute("aria-valuenow")
-      );
+      const readSliderState = async () =>
+        parseChatGptEffortSliderState(
+          await effortSlider.getAttribute("aria-valuemin"),
+          await effortSlider.getAttribute("aria-valuemax"),
+          await effortSlider.getAttribute("aria-valuenow")
+        ) ??
+        parseChatGptEffortStepperState(
+          await effortSlider.locator('[role="status"]').first().textContent()
+        );
+      let sliderState = await readSliderState();
       if (!sliderState) {
         throw new ChatGptWebAdapterError("ChatGPT effort slider exposed an invalid ARIA range", {
           status: 502,
@@ -1993,7 +1999,10 @@ export class ChatGptBrowserWorker {
           }
         );
       }
-      const sliderControl = effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
+      const sliderControl =
+        (await effortSlider.getAttribute("role")) === "menuitem"
+          ? effortSlider
+          : effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
       while (sliderState.value !== targetValue) {
         await throwIfChatGptRateLimitDialog(page);
         const direction = targetValue > sliderState.value ? 1 : -1;
@@ -2002,11 +2011,7 @@ export class ChatGptBrowserWorker {
         await sliderControl.press(key);
         const changeDeadline = Date.now() + 5_000;
         do {
-          sliderState = parseChatGptEffortSliderState(
-            await effortSlider.getAttribute("aria-valuemin"),
-            await effortSlider.getAttribute("aria-valuemax"),
-            await effortSlider.getAttribute("aria-valuenow")
-          );
+          sliderState = await readSliderState();
           if (!sliderState) throw new Error("ChatGPT effort slider lost its semantic ARIA state");
           if (sliderState.value !== previousValue) break;
           await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));

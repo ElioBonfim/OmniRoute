@@ -21,7 +21,7 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
 ].join(", ");
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
 export const CHATGPT_EFFORT_SLIDER_SELECTOR =
-  '[data-model-reasoning-effort-slider] [role="slider"]';
+  '[data-model-reasoning-effort-slider] [role="slider"], [role="menuitem"]:has([role="status"])';
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"]';
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"]';
@@ -61,6 +61,20 @@ export function parseChatGptEffortSliderState(
   if (optionCount < 1 || optionCount > CHATGPT_EFFORT_SLIDER_MAX_OPTIONS) return undefined;
   if (value < min || value > max) return undefined;
   return { min, max, value };
+}
+
+/** Current ChatGPT renders the effort control as a keyboard stepper with a live status label. */
+export function parseChatGptEffortStepperState(
+  statusText: string | null
+): ChatGptEffortSliderState | undefined {
+  const match = statusText?.match(/(?:^|\D)(\d+)\s+(?:of|de)\s+(\d+)(?:\D|$)/i);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  const max = Number(match[2]);
+  if (!Number.isSafeInteger(value) || !Number.isSafeInteger(max)) return undefined;
+  if (max < 1 || max > CHATGPT_EFFORT_SLIDER_MAX_OPTIONS || value < 1 || value > max)
+    return undefined;
+  return { min: 1, max, value };
 }
 
 async function anyVisible(locator: Locator): Promise<boolean> {
