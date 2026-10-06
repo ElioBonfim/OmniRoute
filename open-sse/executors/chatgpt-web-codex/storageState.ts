@@ -70,8 +70,8 @@ function normalizeStorageStateForPlaywright(
       const next = { ...(cookie as Record<string, unknown>) };
       const name = typeof next.name === "string" ? next.name : "";
       if (name.startsWith("__Host-")) {
-        delete next.domain;
-        next.url = "https://chatgpt.com/";
+        delete next.url;
+        next.domain = "chatgpt.com";
         next.path = "/";
         next.secure = true;
       }
