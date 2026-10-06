@@ -337,9 +337,7 @@ test("runSingleModelTest skips web-session providers before sending a chat probe
 });
 
 test("ChatGPT Web Clean Room is eligible for an explicit model test", async () => {
-  const { shouldSkipWebSessionModelTest } = await import(
-    "../../src/lib/api/modelTestRunner.ts"
-  );
+  const { shouldSkipWebSessionModelTest } = await import("../../src/lib/api/modelTestRunner.ts");
 
   assert.equal(shouldSkipWebSessionModelTest("chatgpt-web"), false);
   assert.equal(shouldSkipWebSessionModelTest(" CHATGPT-WEB "), false);
