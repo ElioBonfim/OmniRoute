@@ -41,6 +41,7 @@ import {
 } from "../../open-sse/vendor/codex-chatgpt-web/adapters/chatgpt-web/turn-broker.ts";
 import {
   chatGptPromptFilePayloads,
+  chatGptTurnIdentitySelector,
   insertPlainTextAtComposerSelection,
   mergeChatGptRuntimeStorageState,
   resolveBrowserConfig,
@@ -58,7 +59,11 @@ import {
   compileChatGptWebPrompt,
 } from "../../open-sse/vendor/codex-chatgpt-web/adapters/chatgpt-web/prompt.ts";
 import { parseRequest } from "../../open-sse/vendor/codex-chatgpt-web/responses/parser.ts";
-import { parseChatGptEffortStepperState } from "../../open-sse/vendor/codex-chatgpt-web/chatgpt-session.ts";
+import {
+  CHATGPT_EFFORT_SLIDER_SELECTOR,
+  parseChatGptEffortStepperState,
+} from "../../open-sse/vendor/codex-chatgpt-web/chatgpt-session.ts";
+import { browserContextForStoredState } from "../../open-sse/vendor/codex-chatgpt-web/browser-login.ts";
 import {
   expandPreviousResponseInput,
   rememberResponseState,
@@ -348,6 +353,51 @@ test("current ChatGPT keyboard effort status is parsed across supported locales"
     value: 2,
   });
   assert.equal(parseChatGptEffortStepperState("GPT-5.6 Sol"), undefined);
+});
+
+test("current ChatGPT turn identity selector supports search-unit identities", () => {
+  assert.equal(
+    chatGptTurnIdentitySelector("fallback-turn-0:2:assistant"),
+    '[data-testid="fallback-turn-0:2:assistant"], [data-chatgpt-search-unit-key="fallback-turn-0:2:assistant"]'
+  );
+});
+
+test("current ChatGPT effort selector includes the keyboard slider control", () => {
+  assert.match(CHATGPT_EFFORT_SLIDER_SELECTOR, /data-reasoning-slider/);
+});
+
+test("CDP verification reuses the persistent Chrome context", async () => {
+  const persistentContext = { id: "persistent" };
+  let newContextCalls = 0;
+  const browser = {
+    contexts: () => [persistentContext],
+    newContext: async () => {
+      newContextCalls += 1;
+      return { id: "incognito" };
+    },
+  } as unknown as Parameters<typeof browserContextForStoredState>[0];
+
+  const selected = await browserContextForStoredState(browser, "/tmp/unused-state.json", true);
+  assert.equal(selected.context, persistentContext);
+  assert.equal(selected.owned, false);
+  assert.equal(newContextCalls, 0);
+});
+
+test("managed Chrome keeps using an isolated context loaded from storage state", async () => {
+  const isolatedContext = { id: "isolated" };
+  let receivedOptions: unknown;
+  const browser = {
+    contexts: () => [],
+    newContext: async (options: unknown) => {
+      receivedOptions = options;
+      return isolatedContext;
+    },
+  } as unknown as Parameters<typeof browserContextForStoredState>[0];
+
+  const selected = await browserContextForStoredState(browser, "/tmp/state.json", false);
+  assert.equal(selected.context, isolatedContext);
+  assert.equal(selected.owned, true);
+  assert.deepEqual(receivedOptions, { storageState: "/tmp/state.json" });
 });
 
 test("Codex detection requires originator or Codex User-Agent", () => {

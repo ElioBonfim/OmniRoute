@@ -21,16 +21,19 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
 ].join(", ");
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
 export const CHATGPT_EFFORT_SLIDER_SELECTOR =
-  '[data-model-reasoning-effort-slider] [role="slider"], [role="menuitem"]:has([role="status"])';
+  '[data-model-reasoning-effort-slider] [role="slider"], [role="menuitem"][data-reasoning-slider="true"], [role="menuitem"]:has([role="status"])';
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"]';
-export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"]';
+export const CHATGPT_COMPLETION_ACTION_SELECTOR =
+  'button[data-testid="copy-turn-action-button"], button[aria-label="Copy"], button[aria-label="Copiar"]';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
+  '[data-chatgpt-search-unit-key$=":assistant"]',
   '[data-testid^="conversation-turn-"][data-turn="assistant"]',
   '[data-testid^="conversation-turn-"][data-message-author-role="assistant"]',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"])',
 ].join(", ");
 export const CHATGPT_USER_TURN_SELECTOR = [
+  '[data-chatgpt-search-unit-key$=":user"]',
   '[data-testid^="conversation-turn-"][data-turn="user"]',
   '[data-testid^="conversation-turn-"][data-message-author-role="user"]',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"])',
@@ -171,7 +174,7 @@ export async function detectChatGptAccountCapabilities(
   try {
     const efforts = menu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
     const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).filter({ visible: true }).last();
-    const stepperStatus = menu.locator('[role="status"]').filter({ visible: true }).first();
+    const stepperStatuses = menu.locator('[role="status"]');
     const waitAbort = new AbortController();
     try {
       const ready = await Promise.race([
@@ -182,14 +185,15 @@ export async function detectChatGptAccountCapabilities(
         slider
           .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "slider" as const),
-        stepperStatus
-          .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
+        stepperStatuses
+          .first()
+          .waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "stepper" as const),
       ]);
       const sliderVisible = await slider.isVisible().catch(() => false);
-      const stepperState = parseChatGptEffortStepperState(
-        await stepperStatus.textContent().catch(() => null)
-      );
+      const stepperState = (await stepperStatuses.allTextContents().catch(() => []))
+        .map((text) => parseChatGptEffortStepperState(text))
+        .find((state) => state !== undefined);
       if (ready === "stepper" || stepperState) {
         if (!stepperState) throw new Error("ChatGPT effort stepper exposed an invalid status");
         return { solAvailable: true, proAvailable: stepperState.max >= 5 };
