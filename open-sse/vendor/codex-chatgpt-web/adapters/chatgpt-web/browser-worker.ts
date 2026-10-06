@@ -1860,7 +1860,23 @@ export class ChatGptBrowserWorker {
       throw new Error("Launcher turns require an explicitly leased browser surface");
     }
     const { context } = await this.ensureManagedBrowser();
-    return await context.newPage();
+    try {
+      return await context.newPage();
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/Target page, context or browser has been closed/i.test(error.message)
+      ) {
+        throw error;
+      }
+      const staleBrowser = this.browser;
+      this.browser = undefined;
+      this.context = undefined;
+      this.managedBrowserReady = undefined;
+      await staleBrowser?.close().catch(() => {});
+      const replacement = await this.ensureManagedBrowser();
+      return await replacement.context.newPage();
+    }
   }
 
   private async selectModelAndEffort(
@@ -1929,8 +1945,12 @@ export class ChatGptBrowserWorker {
       .locator(CHATGPT_EFFORT_SLIDER_SELECTOR)
       .filter({ visible: true })
       .last();
+    const effortStepperStatus = effortMenu
+      .locator('[role="status"]')
+      .filter({ visible: true })
+      .first();
     const waitAbort = new AbortController();
-    let ready: "effort" | "slider" | "rate-limit" | "session-expired";
+    let ready: "effort" | "slider" | "stepper" | "rate-limit" | "session-expired";
     try {
       ready = await Promise.race([
         effortChoice
@@ -1939,6 +1959,9 @@ export class ChatGptBrowserWorker {
         effortSlider
           .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "slider" as const),
+        effortStepperStatus
+          .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
+          .then(() => "stepper" as const),
         chatGptRateLimitDialog(page)
           .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "rate-limit" as const),
@@ -1952,8 +1975,15 @@ export class ChatGptBrowserWorker {
       // Those rows can win the locator race even though they are not effort choices.
       if (ready !== "slider" && (await effortSlider.isVisible().catch(() => false)))
         ready = "slider";
+      else if (
+        ready === "effort" &&
+        parseChatGptEffortStepperState(await effortStepperStatus.textContent().catch(() => null))
+      )
+        ready = "stepper";
       await captureDiagnostic?.(
-        ready === "slider" ? "effort-slider-visible" : "effort-choice-visible"
+        ready === "slider" || ready === "stepper"
+          ? "effort-slider-visible"
+          : "effort-choice-visible"
       );
     } catch (error) {
       if (error instanceof ChatGptWebAdapterError) throw error;
@@ -1967,15 +1997,21 @@ export class ChatGptBrowserWorker {
     } finally {
       waitAbort.abort();
     }
-    if (ready === "slider") {
+    if (ready === "slider" || ready === "stepper") {
       const readSliderState = async () =>
-        parseChatGptEffortSliderState(
-          await effortSlider.getAttribute("aria-valuemin"),
-          await effortSlider.getAttribute("aria-valuemax"),
-          await effortSlider.getAttribute("aria-valuenow")
-        ) ??
+        (ready === "slider"
+          ? parseChatGptEffortSliderState(
+              await effortSlider.getAttribute("aria-valuemin"),
+              await effortSlider.getAttribute("aria-valuemax"),
+              await effortSlider.getAttribute("aria-valuenow")
+            )
+          : undefined) ??
         parseChatGptEffortStepperState(
-          await effortSlider.locator('[role="status"]').first().textContent()
+          await (
+            ready === "stepper"
+              ? effortStepperStatus
+              : effortSlider.locator('[role="status"]').first()
+          ).textContent()
         );
       let sliderState = await readSliderState();
       if (!sliderState) {
@@ -2000,15 +2036,18 @@ export class ChatGptBrowserWorker {
         );
       }
       const sliderControl =
-        (await effortSlider.getAttribute("role")) === "menuitem"
-          ? effortSlider
-          : effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
+        ready === "slider"
+          ? (await effortSlider.getAttribute("role")) === "menuitem"
+            ? effortSlider
+            : effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]")
+          : undefined;
       while (sliderState.value !== targetValue) {
         await throwIfChatGptRateLimitDialog(page);
         const direction = targetValue > sliderState.value ? 1 : -1;
         const key = direction > 0 ? "ArrowRight" : "ArrowLeft";
         const previousValue = sliderState.value;
-        await sliderControl.press(key);
+        if (sliderControl) await sliderControl.press(key);
+        else await page.keyboard.press(key);
         const changeDeadline = Date.now() + 5_000;
         do {
           sliderState = await readSliderState();

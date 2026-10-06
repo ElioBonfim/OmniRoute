@@ -171,6 +171,7 @@ export async function detectChatGptAccountCapabilities(
   try {
     const efforts = menu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
     const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).filter({ visible: true }).last();
+    const stepperStatus = menu.locator('[role="status"]').filter({ visible: true }).first();
     const waitAbort = new AbortController();
     try {
       const ready = await Promise.race([
@@ -181,8 +182,18 @@ export async function detectChatGptAccountCapabilities(
         slider
           .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "slider" as const),
+        stepperStatus
+          .waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
+          .then(() => "stepper" as const),
       ]);
-      const sliderVisible = ready === "slider" || (await slider.isVisible().catch(() => false));
+      const sliderVisible = await slider.isVisible().catch(() => false);
+      const stepperState = parseChatGptEffortStepperState(
+        await stepperStatus.textContent().catch(() => null)
+      );
+      if (ready === "stepper" || stepperState) {
+        if (!stepperState) throw new Error("ChatGPT effort stepper exposed an invalid status");
+        return { solAvailable: true, proAvailable: stepperState.max >= 5 };
+      }
       if (!sliderVisible) {
         return { solAvailable: true, proAvailable: (await efforts.count()) >= 5 };
       }
