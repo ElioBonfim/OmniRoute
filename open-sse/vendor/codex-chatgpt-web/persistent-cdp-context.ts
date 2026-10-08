@@ -48,6 +48,9 @@ export async function openChatGptContext(
   if (typeof state.omnirouteUserId === "string" && state.omnirouteUserId) {
     const page = context.pages().find((page) => page.url().startsWith("https://chatgpt.com/"));
     if (!page) throw new Error("Open ChatGPT in the dedicated browser before retrying");
+    // Restored background tabs may defer their document and authentication requests.
+    await page.bringToFront();
+    await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
     const userId = await page.evaluate(async () => {
       const response = await fetch("/api/auth/session");
       if (!response.ok) return null;
@@ -73,6 +76,9 @@ export async function openChatGptContext(
   if (typeof storageState === "string" && !state.omnirouteUserId) {
     const page = context.pages().find((page) => page.url().startsWith("https://chatgpt.com/"));
     if (!page) throw new Error("Open ChatGPT in the dedicated browser before retrying");
+    // Restored background tabs may defer their document and authentication requests.
+    await page.bringToFront();
+    await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
     const userId = await page.evaluate(async () => {
       const response = await fetch("/api/auth/session");
       const session = response.ok ? await response.json() : null;

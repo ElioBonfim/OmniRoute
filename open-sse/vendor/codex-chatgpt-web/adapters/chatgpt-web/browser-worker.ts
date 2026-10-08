@@ -1848,7 +1848,12 @@ export class ChatGptBrowserWorker {
     if (this.managedBrowserReady) {
       const pending = this.managedBrowserReady;
       const ready = await pending;
-      if (ready.browser.isConnected()) return ready;
+      if (ready.browser.isConnected()) {
+        if (usePersistentCdpProfile(this.config.cdpEndpoint)) {
+          await openChatGptContext(ready.browser, this.config.storageStatePath, true);
+        }
+        return ready;
+      }
       // Another caller may already be replacing this disconnected CDP session.
       if (this.managedBrowserReady !== pending) return this.ensureManagedBrowser();
       this.managedBrowserReady = undefined;
