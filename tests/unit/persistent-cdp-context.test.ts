@@ -85,9 +85,24 @@ test("a refreshed session is accepted only for the bound authenticated user and 
     cookie("rotated"),
   ];
   let currentUser = "user-a";
+  const readiness: string[] = [];
   const context = {
     cookies: async () => cookies,
-    pages: () => [{ url: () => "https://chatgpt.com/", evaluate: async () => currentUser }],
+    pages: () => [
+      {
+        url: () => "https://chatgpt.com/",
+        bringToFront: async () => {
+          readiness.push("activate");
+        },
+        waitForLoadState: async () => {
+          readiness.push("ready");
+        },
+        evaluate: async () => {
+          readiness.push("authenticate");
+          return currentUser;
+        },
+      },
+    ],
   } as unknown as BrowserContext;
   const browser = { contexts: () => [context] } as unknown as Browser;
   const state = {

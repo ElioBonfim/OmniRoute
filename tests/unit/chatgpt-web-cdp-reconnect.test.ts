@@ -28,7 +28,13 @@ test("a browser restart replaces stale CDP ownership once for concurrent callers
     { mode: 0o600 }
   );
   writeFileSync(loginVerificationMarkerPath(storageStatePath), "{}", { mode: 0o600 });
-  const page = { url: () => "https://chatgpt.com/", evaluate: async () => "user-a" };
+  let currentUser = "user-a";
+  const page = {
+    url: () => "https://chatgpt.com/",
+    bringToFront: async () => {},
+    waitForLoadState: async () => {},
+    evaluate: async () => currentUser,
+  };
   const context = {
     cookies: async () => cookies,
     pages: () => [page],
@@ -78,6 +84,9 @@ test("a browser restart replaces stale CDP ownership once for concurrent callers
     assert.equal(results[0].browser, replacement);
     assert.equal(results[1].context, context);
     await worker.ensureManagedBrowser();
+    assert.equal(connections, 1);
+    currentUser = "user-b";
+    await assert.rejects(worker.ensureManagedBrowser(), /account does not match/);
     assert.equal(connections, 1);
   } finally {
     chromium.connectOverCDP = original;
