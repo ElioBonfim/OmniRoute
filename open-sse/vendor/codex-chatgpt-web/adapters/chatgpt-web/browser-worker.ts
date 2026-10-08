@@ -1795,7 +1795,7 @@ export class ChatGptBrowserWorker {
   }
 
   private async ensurePage(): Promise<Page> {
-    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.page && !this.page.isClosed() && this.browser?.isConnected()) return this.page;
     if (this.config.browserHost === "launcher") {
       const connection = await connectLauncherBrowserHost(this.config.browserHostDescriptorPath!);
       this.browser = connection.browser;
@@ -1845,7 +1845,17 @@ export class ChatGptBrowserWorker {
   }
 
   private async ensureManagedBrowser(): Promise<{ browser: Browser; context: BrowserContext }> {
-    if (this.managedBrowserReady) return this.managedBrowserReady;
+    if (this.managedBrowserReady) {
+      const pending = this.managedBrowserReady;
+      const ready = await pending;
+      if (ready.browser.isConnected()) return ready;
+      // Another caller may already be replacing this disconnected CDP session.
+      if (this.managedBrowserReady !== pending) return this.ensureManagedBrowser();
+      this.managedBrowserReady = undefined;
+      this.browser = undefined;
+      this.context = undefined;
+      this.page = undefined;
+    }
     const opening = (async () => {
       if (
         !existsSync(this.config.storageStatePath) ||
