@@ -256,6 +256,7 @@ export type ChatGptPersonalizationPreflight = "already-personalized" | "enabled"
 const CHATGPT_PERSONALIZATION_CONTROL_SELECTOR = [
   '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
   '#conversation-header-actions button[aria-haspopup="menu"]',
+  "[data-content-sheet-root] > button[aria-expanded][aria-controls]",
 ].join(", ");
 const CHATGPT_PERSONALIZATION_CHOICE_SELECTOR = '[role="menuitemradio"], [role="radio"]';
 
@@ -2596,7 +2597,7 @@ export class ChatGptBrowserWorker {
         const clone = element.cloneNode(true) as HTMLElement;
         clone
           .querySelectorAll(
-            '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]'
+            '[data-id^="plugin:"][data-keyword], [app-mention-path^="app://"][contenteditable="false"], [data-inline-selection-pill-cursor-target]'
           )
           .forEach((part) => part.remove());
         return [...clone.childNodes]
@@ -2632,14 +2633,22 @@ export class ChatGptBrowserWorker {
 
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
-      .locator('[data-id^="plugin:"][data-keyword]')
-      .filter({ hasText: this.config.appName, visible: true });
+      .locator(
+        [
+          `[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`,
+          `[app-mention-path^="app://"][app-mention-display-name=${JSON.stringify(this.config.appName)}][contenteditable="false"]`,
+        ].join(", ")
+      )
+      .filter({ visible: true });
   }
 
   private async connectorIsSelected(composer: Locator): Promise<boolean> {
     const selected = this.selectedConnectorControl(composer);
     const keywords = await selected.evaluateAll((elements) =>
-      elements.map((element) => element.getAttribute("data-keyword"))
+      elements.map(
+        (element) =>
+          element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name")
+      )
     );
     const exactMatches = keywords.filter((keyword) => keyword === this.config.appName).length;
     if (exactMatches > 1) {
@@ -2699,7 +2708,9 @@ export class ChatGptBrowserWorker {
     attemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 }
   ): Promise<Locator> {
     let composer: Locator;
-    const menuRows = page.locator('.__menu-item[tabindex="0"]');
+    const menuRows = page.locator(
+      '.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]'
+    );
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
@@ -2788,11 +2799,13 @@ export class ChatGptBrowserWorker {
     // ChatGPT's keyboard highlight first; otherwise move the menu highlight until it does. Keep
     // focus on the composer, activate through the menu's real keyboard owner, then prove the exact
     // selected connector pill below.
-    const rowHighlighted = async () => (await appResult.getAttribute("data-highlighted")) !== null;
+    const rowHighlighted = async () =>
+      (await appResult.getAttribute("data-highlighted")) !== null ||
+      (await appResult.getAttribute("aria-current")) === "true";
     if (!(await rowHighlighted())) {
       const visibleRowCount = await menuRows.filter({ visible: true }).count();
       for (let step = 0; step < visibleRowCount && !(await rowHighlighted()); step += 1) {
-        await page.keyboard.press("ArrowDown");
+        await composer.press("ArrowDown");
       }
     }
     if (!(await rowHighlighted())) {
@@ -2800,7 +2813,7 @@ export class ChatGptBrowserWorker {
         `ChatGPT connector menu could not highlight ${JSON.stringify(this.config.appName)}`
       );
     }
-    await page.keyboard.press("Enter");
+    await composer.press("Enter");
     await captureDiagnostic?.("connector-choice-activated");
     // Selecting a connector replaces the Lexical composer subtree. Resolve the active composer
     // again instead of returning the pre-selection locator, otherwise the real turn can focus a

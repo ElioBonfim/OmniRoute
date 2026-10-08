@@ -102,3 +102,12 @@ test("a refreshed session is accepted only for the bound authenticated user and 
   cookies[0].value = "other-workspace";
   await assert.rejects(openChatGptContext(browser, state as never, true), /does not match/);
 });
+
+test("unrelated operator tabs are preserved while leasing the only ChatGPT page", async () => {
+  const foreign = { url: () => "https://example.com/" } as never;
+  const owned = { url: () => "https://chatgpt.com/" } as never;
+  const context = { pages: () => [foreign, owned] } as unknown as BrowserContext;
+  assert.equal(await openChatGptPage(context, true), owned);
+  releasePersistentChatGptPage(owned);
+  assert.deepEqual(context.pages(), [foreign, owned]);
+});

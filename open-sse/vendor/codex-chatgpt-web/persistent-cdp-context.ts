@@ -108,10 +108,11 @@ export function releasePersistentChatGptPage(page: Page): void {
 
 export async function openChatGptPage(context: BrowserContext, persistent: boolean, lease = true) {
   if (!persistent) return context.newPage();
-  if (persistentPageBusy || context.pages().length !== 1) {
+  const pages = context.pages().filter((page) => page.url().startsWith("https://chatgpt.com/"));
+  if (persistentPageBusy || pages.length !== 1) {
     throw new Error("ChatGPT dedicated browser is busy or requires exactly one operator tab");
   }
-  const page = context.pages()[0];
+  const page = pages[0];
   if (!page.url().startsWith("https://chatgpt.com/")) {
     throw new Error("Open ChatGPT in the dedicated browser before retrying");
   }
