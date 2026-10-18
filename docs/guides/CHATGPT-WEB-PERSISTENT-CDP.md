@@ -1,6 +1,12 @@
+---
+title: "ChatGPT Web: persistent CDP profile"
+version: 3.8.52
+lastUpdated: 2026-10-18
+---
+
 # ChatGPT Web: persistent CDP profile
 
-Set `CHATGPT_WEB_CODEX_USE_CDP_PROFILE=1` alongside the configured ChatGPT CDP endpoint to reuse an externally managed browser profile instead of creating isolated contexts. This option is disabled by default.
+Set `CHATGPT_WEB_CODEX_USE_CDP_PROFILE=1` alongside the configured ChatGPT CDP endpoint (`CHATGPT_WEB_CODEX_CDP_URL` or the connection's CDP URL) to reuse an externally managed browser profile instead of creating isolated contexts. This option is disabled by default: unset (or any value other than `1`), and whenever no CDP endpoint is configured, the adapter keeps creating isolated contexts and tabs exactly as before. While it is `1`, the adapter also caps concurrent ChatGPT browser tabs at 1 (default 5).
 
 Use a dedicated browser profile owned by the same operating-system user as OmniRoute. Bind the debugging port to loopback, keep profile permissions private, sign into ChatGPT interactively, and leave exactly one ChatGPT page open. The browser process and its startup/recovery are managed by the operator, separately from OmniRoute. Do not expose CDP through a public tunnel.
 
