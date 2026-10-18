@@ -12,11 +12,19 @@ import { SYNTHETIC_RESPONSES_SEQUENCE_NUMBER } from "./responsesSequence.ts";
 
 type JsonRecord = Record<string, unknown>;
 
+export type StreamFailureSnapshot = {
+  providerEventCount: number;
+  providerSummary?: unknown;
+};
+
 export type StreamFailurePayload = {
   status: number;
   message: string;
   code?: string;
   type?: string;
+  /** The stream had already forwarded text/reasoning/tool output to the client. */
+  outputEmitted?: boolean;
+  streamSnapshot?: StreamFailureSnapshot;
 };
 
 export type ProjectedStreamFailureEvent = {
@@ -45,6 +53,12 @@ export function projectCompletedStreamError(
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+}
+
+function copyFailureSnapshot(record: JsonRecord): Pick<StreamFailurePayload, "streamSnapshot"> {
+  const snapshot = record.streamSnapshot;
+  if (snapshot === undefined) return {};
+  return { streamSnapshot: snapshot as StreamFailureSnapshot };
 }
 
 const RESPONSES_FAILURE_SCALAR_FIELDS = [
@@ -190,6 +204,8 @@ export function normalizeStreamFailurePayload(payload: unknown): StreamFailurePa
               ? record.message
               : "Upstream failure";
   const requestScopedInputFailure =
+    type === "invalid_request" ||
+    code === "invalid_request" ||
     type === "invalid_request_error" ||
     code === "invalid_request_error" ||
     type === "context_length_exceeded" ||
@@ -218,6 +234,7 @@ export function normalizeStreamFailurePayload(payload: unknown): StreamFailurePa
     message,
     code,
     ...(type ? { type } : {}),
+    ...copyFailureSnapshot(record),
   };
 }
 

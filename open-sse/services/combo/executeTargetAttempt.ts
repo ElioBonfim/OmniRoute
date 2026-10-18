@@ -51,7 +51,7 @@ import { recordStickyBinding } from "./sessionStickiness.ts";
 import { recordStickyWeightedSuccess } from "./rrState.ts";
 import { resolveReasoningBufferedMaxTokens, toPositiveInteger } from "../reasoningTokenBuffer.ts";
 import { parseModel } from "../model.ts";
-import { getNextFamilyFallback } from "../modelFamilyFallback.ts";
+import { getNextComboFamilyFallback } from "../modelFamilyFallbackPolicy.ts";
 import type { ProviderProfile } from "../accountFallback.ts";
 import {
   MAX_FALLBACK_WAIT_MS,
@@ -100,22 +100,18 @@ import {
   stopProtectedPriorityTarget,
 } from "./executeTargetClassify.ts";
 import type { CompressionMode } from "../compression/types.ts";
-import type { AttemptLoopDeps, AttemptLoopState, ExecuteTargetResult } from "./attemptLoopTypes.ts";
-import type { ComboErrorBody, ComboRetryAfter, ResolvedComboTarget } from "./types.ts";
+import type { ExecuteTargetResult, ExecuteTargetAttemptOptions } from "./attemptLoopTypes.ts";
+import type { ComboErrorBody, ComboRetryAfter } from "./types.ts";
 import type { ResponseValidationConfig } from "./responseValidation.ts";
 import { resolveComboDailyReset } from "./comboDailyResetClock.ts";
 import type { ProtectedPriorityStopCause } from "./protectedPriorityStopStatus.ts";
 import { isProviderProbeResponse } from "../../../src/shared/utils/providerProbeResult.ts";
 import { recordLocalCircuitRefusal } from "./localCircuitRefusal.ts";
+import { getStrategyTraits } from "./strategyRegistry.ts";
 
-export async function executeTargetAttempt(opts: {
-  index: number;
-  state: AttemptLoopState;
-  deps: AttemptLoopDeps;
-  targetForAttempt: ResolvedComboTarget;
-  profile: unknown;
-  protectedPriorityTarget: boolean;
-}): Promise<ExecuteTargetResult> {
+export async function executeTargetAttempt(
+  opts: ExecuteTargetAttemptOptions
+): Promise<ExecuteTargetResult> {
   const { index: i, state, deps, targetForAttempt, protectedPriorityTarget } = opts;
   const profile = opts.profile as ProviderProfile | undefined;
   const target = state.orderedTargets[i];
@@ -221,7 +217,7 @@ export async function executeTargetAttempt(opts: {
       );
       if (persistedRetrySkip) {
         deps.log.info("COMBO", persistedRetrySkip);
-        if (i > 0) state.fallbackCount++;
+        state.fallbackCount++;
         return null;
       }
     }
@@ -408,7 +404,7 @@ export async function executeTargetAttempt(opts: {
           error: quality.reason || "upstream response failed quality validation",
           kind: qualityFailure.kind,
         });
-        if (i > 0) state.fallbackCount++;
+        state.fallbackCount++;
         state.requestScopedFailureSeen ||= qualityFailure.requestScoped;
         if (qualityFailure.requestScoped)
           state.requestScopedRejectedModelKeys?.add(requestScopedReplayKey(modelStr));
@@ -441,13 +437,14 @@ export async function executeTargetAttempt(opts: {
         state.observeFailure(false, target.executionKey);
         if (handlePreContentStreamRetry(quality, retry, deps, modelStr)) continue;
         familyTried.add(modelStr);
-        // A request-scoped refusal (invalid request, context overflow) is a property of
-        // the request, not of the effort tier — replaying it on a sibling alias of the
-        // same model just repeats the refusal, so let the combo advance instead.
-        const familyNext =
-          provider && provider !== "unknown" && !quality.upstreamFailure?.requestScoped
-            ? getNextFamilyFallback(modelStr, familyTried, provider)
-            : null;
+        const familyNext = await getNextComboFamilyFallback({
+          model: modelStr,
+          tried: familyTried,
+          provider,
+          connectionId: effectiveConnectionId,
+          headers: deps.requestHeaders,
+          requestScoped: quality.upstreamFailure?.requestScoped,
+        });
         if (familyNext && familyNext !== modelStr) {
           deps.log.info("COMBO", `Quality fail ${modelStr} -> family sibling ${familyNext}`);
           modelStr = familyNext;
@@ -523,7 +520,10 @@ export async function executeTargetAttempt(opts: {
           providerProbeSettled: isProviderProbeResponse(result),
         });
       }
-      if (deps.strategy === "weighted" && (deps.stickyWeightedLimit ?? 0) > 1) {
+      if (
+        getStrategyTraits(deps.strategy).stickyPin === "weighted" &&
+        (deps.stickyWeightedLimit ?? 0) > 1
+      ) {
         const stickySuccessKey = deps.getWeightedStepKeyForTarget?.(target);
         if (stickySuccessKey) {
           recordStickyWeightedSuccess(
@@ -623,7 +623,7 @@ export async function executeTargetAttempt(opts: {
       // combo.ts decides whether a successful turn should generate a handoff,
       // while chat.ts injects the handoff after the real connectionId is resolved.
       if (
-        deps.strategy === "context-relay" &&
+        getStrategyTraits(deps.strategy).contextRelay &&
         deps.relayOptions?.sessionId &&
         deps.relayConfig &&
         (deps.relayConfig.handoffProviders ?? []).includes(provider) &&
@@ -757,7 +757,7 @@ export async function executeTargetAttempt(opts: {
       state.lastError = refusal.error;
       state.lastStatus = refusal.status;
       state.comboErrors.push(refusal.outcome);
-      if (i > 0) state.fallbackCount++;
+      state.fallbackCount++;
       return null;
     }
 
@@ -803,7 +803,8 @@ export async function executeTargetAttempt(opts: {
         target: toRecordedTarget(target),
       });
       state.recordedAttempts++;
-      if (i > 0) state.fallbackCount++;
+      // Terminal stop — the combo does not advance to another target, so no
+      // fallback was attempted here whatever the index of the failing target is.
       return { ok: false, response: result };
     }
 
@@ -860,7 +861,8 @@ export async function executeTargetAttempt(opts: {
         target: toRecordedTarget(target),
       });
       state.recordedAttempts++;
-      if (i > 0) state.fallbackCount++;
+      // Terminal stop: the same input would fail identically on every account, so
+      // the combo aborts instead of moving on — no fallback happened.
       return { ok: false, response: result };
     }
     const fallbackResult = checkFallbackError(
@@ -961,7 +963,8 @@ export async function executeTargetAttempt(opts: {
         code: structuredError?.code,
       });
       state.lastStatus = result.status;
-      if (i > 0) state.fallbackCount++;
+      // Terminal stop ("stopping combo"): no later target is tried, so this is not
+      // a fallback even when the failing target is not the first one.
       deps.log.warn("COMBO", `Model ${modelStr} failed with body-specific error, stopping combo`);
       deps.clearStaleLKGP(
         deps.combo.name,
@@ -1099,7 +1102,7 @@ export async function executeTargetAttempt(opts: {
         // was just observed. Recording it here mirrors the "done retrying" path.
         state.lastError = errorText || String(result.status);
         state.lastStatus = result.status;
-        if (i > 0) state.fallbackCount++;
+        state.fallbackCount++;
         return null;
       }
       // Record model lockout immediately on the first transient failure —
@@ -1145,7 +1148,7 @@ export async function executeTargetAttempt(opts: {
         // first-failure lockout path, so lastStatus needs recording here too.
         state.lastError = errorText || String(result.status);
         state.lastStatus = result.status;
-        if (i > 0) state.fallbackCount++;
+        state.fallbackCount++;
         return null;
       }
       continue; // Retry same model (transient error, no lockout recorded)
@@ -1198,7 +1201,7 @@ export async function executeTargetAttempt(opts: {
       code: structuredError?.code,
     });
     state.lastStatus = result.status;
-    if (i > 0) state.fallbackCount++;
+    state.fallbackCount++;
     // Wire combo failures into the resilience dashboard (model-level lockout)
     // alongside the provider-level cooldown below — they govern different scopes.
     if (

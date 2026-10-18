@@ -16,6 +16,7 @@ import {
   type BrowserContextOptions,
   type Page,
 } from "playwright-core";
+import { cdpConnectOptions } from "./cdp-auth";
 import type { AppConfig } from "./config";
 import { atomicWriteFile } from "./config";
 import {
@@ -117,7 +118,7 @@ async function inspectStoredState(
     throw new Error("ChatGPT browser verification requires Chrome or a CDP endpoint");
   }
   const verifierBrowser = config.cdpEndpoint
-    ? await chromium.connectOverCDP(config.cdpEndpoint)
+    ? await chromium.connectOverCDP(config.cdpEndpoint, cdpConnectOptions())
     : await chromium.launch({
         executablePath: config.chromeExecutablePath,
         headless: !config.headed,

@@ -123,6 +123,20 @@ can emit it directly.
 Source: `src/shared/services/claudeCliConfig.ts::buildClaudeDiscoverySettingsSnippet` (pure
 builder, unit-tested) rendered by `ClaudeGatewayOnboardingBlock`.
 
+### Pin one account (optional)
+
+To send every Claude Code request through one specific provider account, add the
+`x-omniroute-connection` header through `ANTHROPIC_CUSTOM_HEADERS` in the same `env` block:
+
+```jsonc
+"ANTHROPIC_CUSTOM_HEADERS": "x-omniroute-connection: <connection id>"
+```
+
+Copy the id from the `xxxxxxxx…` chip on the connection row of the provider page. The pin only
+applies to single-model ids (`provider/model`), not to combos. See
+[Account pinning per request](../reference/API_REFERENCE.md#account-pinning-per-request) for the
+exact fallback behavior.
+
 ---
 
 ## Profiles (`CLAUDE_CONFIG_DIR`)
@@ -174,6 +188,10 @@ omniroute setup-claude --remote http://192.168.0.15:20128 --api-key oma_live_xxx
 
 # Only some providers
 omniroute setup-claude --only glm,kimi
+
+# Also write profiles for local-CLI providers (zcode, auggie, devin-cli-agentic,
+# codex-app-server) not detected on this host (skipped by default for a local target)
+omniroute setup-claude --include-local
 
 # Preview without writing
 omniroute setup-claude --dry-run

@@ -16,6 +16,7 @@ import {
   readProseRetryAfter,
 } from "../../utils/error.ts";
 import { buildRecoveryHint } from "./pinRecovery.ts";
+import { buildContextBudgetResponse } from "./budgetExhaustion.ts";
 import { formatExhaustedConnectionKey } from "./comboDiagFormat.ts";
 import { collectQuotaWindowExclusions, formatQuotaSkipMessage } from "./quotaSkipDiagnostics.ts";
 import { recordComboRequest, recordPersistedSkipBypass } from "../comboMetrics.ts";
@@ -236,7 +237,13 @@ export async function handleRoundRobinCombo({
     body,
     log,
     "Context-aware round-robin fallback",
-    { failOpen: rrCompatFailOpen }
+    {
+      failOpen: rrCompatFailOpen,
+      outputLimitAdvisory:
+        (config as { outputLimitAdvisory?: unknown }).outputLimitAdvisory === true ||
+        (settings as { outputLimitAdvisory?: unknown } | null | undefined)?.outputLimitAdvisory ===
+          true,
+    }
   );
   // #6238: keep the targets the compat pre-filter rejected so they can serve as a
   // last-resort fallback tier. The pre-filter drops request-incompatible targets
@@ -427,6 +434,10 @@ export async function handleRoundRobinCombo({
   let lastStatus: number | null = null;
   let earliestRetryAfter: ComboRetryAfter | null = null;
   let globalAttempts = 0;
+  // Number of ordered targets abandoned before the one that serves this
+  // request — equals the winning model's offset and the
+  // `X-OmniRoute-Fallback-Attempts` header. The first model counts too:
+  // abandoning it *is* the first fallback.
   let fallbackCount = 0;
   let recordedAttempts = 0;
   // #11134: operator-configurable shared attempt budget (clamped to the hard
@@ -485,7 +496,7 @@ export async function handleRoundRobinCombo({
       const provider = target.provider;
       if (rejectedModelKeys.has(requestScopedReplayKey(modelStr))) {
         log.info("COMBO-RR", `Skipping ${modelStr} — same request already refused request-scoped`);
-        if (offset > 0) fallbackCount++;
+        fallbackCount++;
         continue;
       }
       const rrEvents = createRRDashboardEvents(combo.name, modelIndex, provider, modelStr);
@@ -510,7 +521,7 @@ export async function handleRoundRobinCombo({
             undefined,
             target
           );
-          if (offset > 0) fallbackCount++;
+          fallbackCount++;
           continue;
         }
         recordPersistedSkipBypass(combo.name);
@@ -536,7 +547,7 @@ export async function handleRoundRobinCombo({
             undefined,
             target
           );
-          if (offset > 0) fallbackCount++;
+          fallbackCount++;
           continue;
         }
       }
@@ -560,7 +571,7 @@ export async function handleRoundRobinCombo({
           undefined,
           target
         );
-        if (offset > 0) fallbackCount++;
+        fallbackCount++;
         continue;
       }
 
@@ -581,7 +592,7 @@ export async function handleRoundRobinCombo({
           undefined,
           target
         );
-        if (offset > 0) fallbackCount++;
+        fallbackCount++;
         continue;
       }
 
@@ -592,7 +603,7 @@ export async function handleRoundRobinCombo({
         !(await perTargetAdmission({ modelStr, executionKey: target.executionKey, body }))
       ) {
         log.info("COMBO-RR", `Skipping ${modelStr} — admission lane full (#9654)`);
-        if (offset > 0) fallbackCount++;
+        fallbackCount++;
         continue;
       }
 
@@ -613,13 +624,12 @@ export async function handleRoundRobinCombo({
             "COMBO-RR",
             `Semaphore ${errCode === "SEMAPHORE_QUEUE_FULL" ? "queue full" : "timeout"} for ${modelStr}, trying next model`
           );
-          if (offset > 0) fallbackCount++;
+          fallbackCount++;
           continue;
         }
         throw err;
       }
 
-      // Retry loop within this model
       try {
         for (let retry = 0; retry <= maxRetries; retry++) {
           globalAttempts++;
@@ -628,7 +638,7 @@ export async function handleRoundRobinCombo({
               "COMBO-RR",
               `Maximum combo attempts (${maxGlobalAttempts}) exceeded. Terminating loop to prevent runaway requests.`
             );
-            return errorResponseWithComboDiagnostics(503, "Maximum combo retry limit reached", {
+            return buildContextBudgetResponse(lastError, rrOutcomes, {
               poolSize: modelCount,
               attempted: globalAttempts,
               excluded: [
@@ -788,7 +798,7 @@ export async function handleRoundRobinCombo({
                 handlePreContentStreamRetry(quality, retry, { maxRetries, signal, log }, modelStr)
               )
                 continue;
-              if (offset > 0) fallbackCount++;
+              fallbackCount++;
               break; // move to next model
             }
             const latencyMs = Date.now() - startTime;
@@ -942,7 +952,7 @@ export async function handleRoundRobinCombo({
             lastError = refusal.error;
             lastStatus = refusal.status;
             rrOutcomes.push(refusal.outcome);
-            if (offset > 0) fallbackCount++;
+            fallbackCount++;
             break;
           }
           const isStreamReadinessFailure =
@@ -1118,7 +1128,7 @@ export async function handleRoundRobinCombo({
             kind: classifyComboOutcome(result.status, errorText),
             code: structuredError?.code,
           });
-          if (offset > 0) fallbackCount++;
+          fallbackCount++;
           log.warn("COMBO-RR", `${modelStr} failed, trying next model`, {
             status: result.status,
             errorBody: redactConnectionLabel(errorText),

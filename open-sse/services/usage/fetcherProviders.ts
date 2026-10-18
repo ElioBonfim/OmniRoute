@@ -25,6 +25,7 @@ export const USAGE_FETCHER_PROVIDERS = [
   "antigravity",
   "agy",
   "claude",
+  "anthropic",
   "codex",
   "cursor",
   "kiro",
@@ -46,11 +47,12 @@ export const USAGE_FETCHER_PROVIDERS = [
   "bailian-coding-plan",
   "qwen-cloud-token-plan",
   "nanogpt",
+  // NaN.Builders per-model token counters (GET cloud-api.nan.builders/api/usage/quota)
+  "nan",
   "apmix",
   "deepseek",
   "moonshot",
   "kimi",
-  "opencode",
   "opencode-zen",
   "xiaomi-mimo",
   "xiaomi-mimo-token-plan",
@@ -61,6 +63,8 @@ export const USAGE_FETCHER_PROVIDERS = [
   "vertex",
   "vertex-partner",
   "codebuddy-cn",
+  "codebuddy-intl",
+  "cbai",
   "openrouter",
   // LLM Gateway DevPass allowance (GET /v1/key → monthly + weekly premium)
   "llmgateway",
@@ -107,6 +111,8 @@ export const USAGE_FETCHER_PROVIDERS = [
   // ChatPlayground subscription and daily credits (GET /api/user)
   "chatplayground",
   "cpl",
+  // Cloudflare Workers AI daily neurons (GraphQL Analytics aiInferenceAdaptiveGroups)
+  "cloudflare-ai",
 ] as const;
 
 export type UsageFetcherProvider = (typeof USAGE_FETCHER_PROVIDERS)[number];

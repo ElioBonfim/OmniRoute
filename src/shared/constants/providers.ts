@@ -23,7 +23,6 @@ export const FREE_PROVIDERS = {};
 
 export const FREE_APIKEY_PROVIDER_IDS = new Set([
   "qoder",
-  "opencode",
   "dahl",
   // auggie is a fully local, credential-less CLI passthrough (auth handled by
   // `auggie login` outside OmniRoute). Admitted here purely so POST /api/providers
@@ -47,6 +46,7 @@ export function supportsApiKeyOnFreeProvider(providerId: unknown): boolean {
 const DUAL_AUTH_PROVIDER_IDS = new Set([
   "clinepass",
   "codebuddy-cn",
+  "codebuddy-intl",
   "xai",
   "muse-code",
   "cline",
@@ -161,6 +161,8 @@ export const AGGREGATOR_PROVIDER_IDS = new Set([
   "logfare",
   "seekai",
   "tokenmarket",
+  "demonroute",
+  "daoxe",
 ]);
 
 export const ENTERPRISE_CLOUD_PROVIDER_IDS = new Set([

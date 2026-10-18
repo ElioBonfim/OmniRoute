@@ -74,8 +74,10 @@ describe("feature-flags-settings count update", () => {
     // OPENCODE_POOL_RESELECT (default off) to 79; PROXY_POOL_SHARED_EGRESS_ORDER
     // (#14657, default off) to 80; PROXY_OPERATOR_EGRESS_ENABLED (#15314,
     // default off) to 82; USAGE_LIMIT_IGNORE_UNPRICED (#14799, default off) to 83;
-    // REASONING_REPLAY_ENABLED (#12486, default on) to 84.
-    assert.equal(FEATURE_FLAG_DEFINITIONS.length, 84);
+    // REASONING_REPLAY_ENABLED (#12486, default on) to 84; COMBO_AUTO_PRUNE_STALE_STEPS
+    // (#13505, default off) to 85; KIRO_TOOL_CALL_REPAIR_ENABLED (default on) to 86;
+    // CLAUDE_OAUTH_SUMMARIZED_THINKING_UNREDACTED (#17003, default off) to 87.
+    assert.equal(FEATURE_FLAG_DEFINITIONS.length, 87);
   });
 });
 
@@ -121,7 +123,7 @@ describe("i18n key parity for SERVER_OWNED_TOOL_LOOP_ENABLED", () => {
     const flagDef = definitions.SERVER_OWNED_TOOL_LOOP_ENABLED as
       Record<string, unknown> | undefined;
     assert.ok(flagDef, "definitions should contain SERVER_OWNED_TOOL_LOOP_ENABLED");
-    assert.equal(flagDef.label, "Server-Owned Tool Loop");
+    assert.equal(flagDef.label, "Loop de ferramentas controlado pelo servidor");
     assert.equal(typeof flagDef.description, "string");
     assert.ok(
       ((flagDef.description as string) || "").length > 0,

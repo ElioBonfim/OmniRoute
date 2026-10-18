@@ -31,6 +31,7 @@ export interface ReasoningStateInspection {
 export interface ReasoningInputPolicyOptions {
   provider?: string | null;
   preserveEncryptedReasoning?: boolean;
+  preserveWebSearchCalls?: boolean;
   onIncompatibleReasoning?: "reject" | "drop";
 }
 
@@ -259,6 +260,7 @@ function sanitizeResponsesInput(
   transport: ReasoningTransport,
   dropIncompatible: boolean,
   stripOrphanedSummaries: boolean,
+  preserveWebSearchCalls: boolean,
   preserveMessageIds: boolean = false
 ): unknown[] {
   const filtered: unknown[] = [];
@@ -270,6 +272,10 @@ function sanitizeResponsesInput(
       continue;
     }
     if (record.type === "item_reference") continue;
+    if (preserveWebSearchCalls && record.type === "web_search_call") {
+      filtered.push({ ...record });
+      continue;
+    }
 
     if (record.type === "reasoning") {
       const next = dropIncompatible
@@ -360,6 +366,7 @@ export function applyReasoningInputPolicy(
       transport,
       incompatibleReasoning || mixedState,
       body.store === false,
+      options.preserveWebSearchCalls === true,
       options.provider === "chatgpt-web-codex"
     );
   }

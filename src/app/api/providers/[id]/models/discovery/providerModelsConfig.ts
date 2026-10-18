@@ -28,6 +28,7 @@ import { isDashscopeTextModelId } from "@omniroute/open-sse/services/dashscopeTe
 import { extractZaiToken } from "@omniroute/open-sse/services/zaiWebCredentials.ts";
 import { buildOpencodeBackgroundHeaders } from "@omniroute/open-sse/utils/opencodeHeaders.ts";
 import { isFeatureFlagEnabled } from "@/shared/utils/featureFlags";
+import { applyConnectionCustomHeaders } from "./connectionCustomHeaders";
 import { buildChatPlaygroundModelsDiscoveryEntry } from "@omniroute/open-sse/services/chatplaygroundModels.ts";
 import { normalizeOpenAiLikeModelsResponse, normalizeWorkbuddyModelsResponse } from "./normalizers";
 
@@ -140,6 +141,7 @@ export function assembleProviderModelsHeaders(
   if (!config.buildHeaders && config.authHeader && !config.authQuery) {
     headers[config.authHeader] = (config.authPrefix || "") + token;
   }
+  applyConnectionCustomHeaders(headers, context?.providerSpecificData);
   return headers;
 }
 
@@ -845,12 +847,31 @@ export const PROVIDER_MODELS_CONFIG: Record<string, ProviderModelsConfigEntry> =
     parseResponse: (data) => data.data || data.models || [],
   },
   "ollama-cloud": {
-    url: "https://api.ollama.com/v1/models",
+    // Hosted Ollama lists directly callable models at /api/tags (#16823).
+    url: "https://ollama.com/api/tags",
     method: "GET",
     headers: { "Content-Type": "application/json" },
     authHeader: "Authorization",
     authPrefix: "Bearer ",
-    parseResponse: (data) => data.models || data.data || [],
+    // Ollama tag rows use name/model, not id; the synced catalog needs id.
+    parseResponse: (data) => {
+      const models = Array.isArray(data?.models)
+        ? data.models
+        : Array.isArray(data?.data)
+          ? data.data
+          : [];
+      return models.flatMap((model: any) => {
+        if (!model || typeof model !== "object") return [];
+        const id = [model.id, model.model, model.name].find(
+          (value) => typeof value === "string" && value.trim().length > 0
+        );
+        if (typeof id !== "string") return [];
+        const normalizedId = id.trim();
+        const name =
+          typeof model.name === "string" && model.name.trim() ? model.name.trim() : normalizedId;
+        return [{ ...model, id: normalizedId, name }];
+      });
+    },
   },
   "cloudflare-ai": {
     url: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/models/search",
@@ -900,10 +921,9 @@ export const PROVIDER_MODELS_CONFIG: Record<string, ProviderModelsConfigEntry> =
     authPrefix: "Bearer ",
     parseResponse: (data) => data.data || data.models || [],
   },
-  // OpenCode CLI identity headers on all three opencode-family entries (see
+  // OpenCode CLI identity headers on both opencode-family entries (see
   // buildOpencodeModelsDiscoveryEntry above for why — bare "Bun fetch" calls
   // without x-opencode-session are what OpenCode's operator warning names).
-  opencode: buildOpencodeModelsDiscoveryEntry("https://opencode.ai/zen/v1/models"),
   "opencode-zen": buildOpencodeModelsDiscoveryEntry("https://opencode.ai/zen/v1/models"),
   "opencode-go": buildOpencodeModelsDiscoveryEntry("https://opencode.ai/zen/go/v1/models"),
   "glm-cn": {

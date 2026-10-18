@@ -26,6 +26,7 @@ import {
   legacyChatGptConnectorMigrationMessage,
   LEGACY_CHATGPT_CONNECTOR_NAMES,
 } from "../../config";
+import { cdpConnectOptions } from "../../cdp-auth";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
@@ -114,7 +115,6 @@ import type {
 export { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
 
 const workers = new Map<string, ChatGptBrowserWorker>();
-
 type ChatGptBrowserStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 
 function isVerifiedChatGptAuthCookie(name: string): boolean {
@@ -1822,7 +1822,7 @@ export class ChatGptBrowserWorker {
       );
     }
     this.browser = this.config.cdpEndpoint
-      ? await chromium.connectOverCDP(this.config.cdpEndpoint)
+      ? await chromium.connectOverCDP(this.config.cdpEndpoint, cdpConnectOptions())
       : await chromium.launch({
           executablePath: this.config.chromeExecutablePath,
           headless: !this.config.headed,
@@ -1881,7 +1881,7 @@ export class ChatGptBrowserWorker {
         );
       }
       const browser = this.config.cdpEndpoint
-        ? await chromium.connectOverCDP(this.config.cdpEndpoint)
+        ? await chromium.connectOverCDP(this.config.cdpEndpoint, cdpConnectOptions())
         : await chromium.launch({
             executablePath: this.config.chromeExecutablePath,
             headless: !this.config.headed,
