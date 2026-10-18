@@ -489,3 +489,20 @@ export function isDbHealthcheckStartupDeferredEnabled(): boolean {
     return false;
   }
 }
+
+/**
+ * Image generation long jobs (#16260). Opt-in: off keeps the fixed image fetch budget, no
+ * caller cancellation (499) and no Playground SSE wrapping.
+ * Fail closed: an unreadable flag store keeps the pre-flag behavior (disabled).
+ */
+export function isImageGenerationLongJobsEnabled(): boolean {
+  try {
+    return isFeatureFlagEnabled("IMAGE_GENERATION_LONG_JOBS");
+  } catch (error) {
+    console.error(
+      "[featureFlags] Failed to resolve IMAGE_GENERATION_LONG_JOBS, defaulting to disabled:",
+      error instanceof Error ? error.message : error
+    );
+    return false;
+  }
+}

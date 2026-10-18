@@ -46,7 +46,7 @@ A boolean flag is considered **enabled** when its effective value is `"true"`,
 
 ## Flag Catalog
 
-87 flags across 6 categories. **Default** is the definition default — the value
+88 flags across 6 categories. **Default** is the definition default — the value
 used when neither a DB override nor an environment variable is present.
 
 ### Security (10)
@@ -103,7 +103,7 @@ used when neither a DB override nor an environment variable is present.
 | `USAGE_LIMIT_IGNORE_UNPRICED`   | boolean | `false`    | Count usage of models that have no price as $0 in per-key USD usage quotas instead of treating the quota as exceeded. Off by default: an unpriced model or routing alias can hide real spend, so the quota fails closed.         |
 | `RADAR_ENABLED`                 | boolean | `false`    | Enable the OmniRoute Radar module (catalog feed screens and sync). Off by default; enabling only unlocks the UI — data sync remains a separate opt-in.                                                                           |
 
-### Runtime (38)
+### Runtime (39)
 
 | Key                                           | Type    | Default | Restart | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------------------- | ------- | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,6 +145,7 @@ used when neither a DB override nor an environment variable is present.
 | `COMBO_AUTO_PRUNE_STALE_STEPS`                | boolean | `false` |         | After a successful model sync against an authoritative live catalog, remove combo steps pinned to models the catalog no longer lists, with one audit entry per removed step. Never prunes on a failed, degraded or free-only sync, and never empties a combo. Off by default: stale steps are only flagged.                                                                                                                                                                                                                                                                                                                                     |
 | `CLAUDE_OAUTH_SUMMARIZED_THINKING_UNREDACTED` | boolean | `false` |         | Let a Claude OAuth request that asks for readable thinking (`thinking.display: "summarized"`) drop the `redact-thinking-2026-02-12` Anthropic beta, which otherwise makes Anthropic return empty, signature-only thinking blocks. Off by default: that beta is part of the Claude Code OAuth wire fingerprint, so OAuth requests keep it unchanged. API-key Claude requests already honor summarized thinking without this flag; `OMNIROUTE_REDACT_THINKING=false` also reaches OAuth only when this flag is on.                                                                                                                                |
 | `KIRO_TOOL_CALL_REPAIR_ENABLED`               | boolean | `true`  |         | When a streaming Kiro response emits a malformed `tool_call` wrapper (missing `input.name` or `input.arguments`) before any visible output, suppress it and re-send the request once with a corrective instruction instead of ending the turn with `invalid_kiro_tool_call`. The retry costs one extra Kiro request; a second failure ends the turn with `kiro_tool_call_repair_retry_failed`. On by default. Set to `false` to fail the turn on the first malformed wrapper.                                                                                                                                                                   |
+| `IMAGE_GENERATION_LONG_JOBS`                  | boolean | `false` |         | For OpenAI-compatible image generation (#16260): use the connection timeout (`providerSpecificData.timeoutMs`), else the central upstream fetch timeout (`FETCH_TIMEOUT_MS` → `REQUEST_TIMEOUT_MS` → default 600 s) instead of the fixed 120 s image budget; answer 499 when the caller cancels; let the Playground receive long image jobs as an SSE stream with keepalive heartbeats. Off by default: the fixed budget applies and caller cancellation is not propagated. The deadline covering the response body read is always on.                                                                                                          |
 
 ### CLI (5)
 
@@ -227,7 +228,7 @@ Returns every flag with its effective value, source, and a summary.
       "requiresRestart": false,
       "warningLevel": "caution",
     },
-    // ... all 77 flags
+    // ... all 88 flags
   ],
   "summary": {
     "total": 56,
