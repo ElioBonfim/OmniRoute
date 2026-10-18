@@ -32,6 +32,38 @@ export function usePersistentCdpProfile(cdpEndpoint?: string): boolean {
   return Boolean(cdpEndpoint) && process.env.CHATGPT_WEB_CODEX_USE_CDP_PROFILE === "1";
 }
 
+/** Persistent profile: the dedicated browser must be signed in to the connection's own account. */
+async function assertPersistentAccountMatches(
+  context: BrowserContext,
+  state: { omnirouteUserId: string; cookies: Cookie[] },
+  currentCookies: Cookie[]
+): Promise<void> {
+  const page = context.pages().find((page) => page.url().startsWith("https://chatgpt.com/"));
+  if (!page) throw new Error("Open ChatGPT in the dedicated browser before retrying");
+  // Restored background tabs may defer their document and authentication requests.
+  await page.bringToFront();
+  await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
+  const userId = await page.evaluate(async () => {
+    const response = await fetch("/api/auth/session");
+    if (!response.ok) return null;
+    const session = await response.json();
+    return typeof session.user?.id === "string" ? session.user.id : null;
+  });
+  const account = (cookies: Cookie[]) =>
+    cookies.find(
+      (cookie) =>
+        cookie.name === "_account" &&
+        (cookie.domain === ".chatgpt.com" || cookie.domain === "chatgpt.com")
+    )?.value;
+  if (
+    userId !== state.omnirouteUserId ||
+    !account(state.cookies) ||
+    account(state.cookies) !== account(currentCookies)
+  ) {
+    throw new Error("ChatGPT dedicated browser account does not match this connection");
+  }
+}
+
 export async function openChatGptContext(
   browser: Browser,
   storageState: NonNullable<BrowserContextOptions["storageState"]>,
@@ -46,30 +78,7 @@ export async function openChatGptContext(
       : storageState;
   const currentCookies = await context.cookies("https://chatgpt.com");
   if (typeof state.omnirouteUserId === "string" && state.omnirouteUserId) {
-    const page = context.pages().find((page) => page.url().startsWith("https://chatgpt.com/"));
-    if (!page) throw new Error("Open ChatGPT in the dedicated browser before retrying");
-    // Restored background tabs may defer their document and authentication requests.
-    await page.bringToFront();
-    await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
-    const userId = await page.evaluate(async () => {
-      const response = await fetch("/api/auth/session");
-      if (!response.ok) return null;
-      const session = await response.json();
-      return typeof session.user?.id === "string" ? session.user.id : null;
-    });
-    const account = (cookies: Cookie[]) =>
-      cookies.find(
-        (cookie) =>
-          cookie.name === "_account" &&
-          (cookie.domain === ".chatgpt.com" || cookie.domain === "chatgpt.com")
-      )?.value;
-    if (
-      userId !== state.omnirouteUserId ||
-      !account(state.cookies) ||
-      account(state.cookies) !== account(currentCookies)
-    ) {
-      throw new Error("ChatGPT dedicated browser account does not match this connection");
-    }
+    await assertPersistentAccountMatches(context, state, currentCookies);
   } else {
     assertMatchingChatGptSession(state.cookies, currentCookies);
   }
