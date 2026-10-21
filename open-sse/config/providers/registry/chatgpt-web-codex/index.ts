@@ -26,5 +26,14 @@ export const chatgpt_web_codexProvider: RegistryEntry = {
     { id: "high", name: "ChatGPT Web — High", ...NATIVE_CAPABILITIES },
     { id: "extra-high", name: "ChatGPT Web — Extra High", ...NATIVE_CAPABILITIES },
     { id: "pro", name: "ChatGPT Web — Pro", ...NATIVE_CAPABILITIES },
+    ...["6", "5.6"].flatMap((version) => [
+      { id: `gpt-${version}-sol`, name: `GPT-${version} Sol (Web)`, ...NATIVE_CAPABILITIES },
+      { id: `gpt-${version}-pro`, name: `GPT-${version} Pro (Web)`, ...NATIVE_CAPABILITIES },
+      {
+        id: `gpt-${version}-sol-instant`,
+        name: `GPT-${version} Sol Instant (Web)`,
+        ...NATIVE_CAPABILITIES,
+      },
+    ]),
   ],
 };

@@ -1,3 +1,4 @@
+import { buildChatGptConversationTitle } from "./conversation-title";
 /* Adapted from miuuyy/codex-chatgpt-web v4.0.7 commit b59d7dc51b84fb1f465ff1d00f5207f3b2b4a494 (MIT). */
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -370,6 +371,11 @@ export function createChatGptWebAdapter(
       turnCapabilities
     );
     const identity = extractChatGptTurnIdentity(parsed);
+    const conversationTitle =
+      provider.chatgptWeb?.useSavedChats === true &&
+      provider.chatgptWeb.labelSavedConversations === true
+        ? buildChatGptConversationTitle({ cwd: environment?.cwd, sessionId: identity.threadId })
+        : undefined;
     const captureLunaCheckpoint =
       parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID &&
       !parsed._compactionRequest &&
@@ -445,8 +451,10 @@ export function createChatGptWebAdapter(
         finalizeCheckpoint(
           worker.run({
             traceId,
+            ...(conversationTitle ? { conversationTitle } : {}),
             modelId: parsed.modelId,
             reasoning: parsed.options.reasoning,
+            ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
             capabilities: turnCapabilities,
             prepare: async () => ({
               ...compileChatGptWebPrompt(
@@ -520,7 +528,7 @@ export function createChatGptWebAdapter(
           turnToken,
           compileOptionsFor(input)
         );
-        return { ...compiled, release: () => {} };
+        return { ...compiled, turnToken, release: () => {} };
       } catch (error) {
         await broker.revoke(turnToken);
         activeToken = undefined;
@@ -531,8 +539,10 @@ export function createChatGptWebAdapter(
       finalizeCheckpoint(
         worker.run({
           traceId,
+          ...(conversationTitle ? { conversationTitle } : {}),
           modelId: parsed.modelId,
           reasoning: parsed.options.reasoning,
+          ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
           capabilities: turnCapabilities,
           prepare: () => prepareWith(checkpointInput.parsed),
           ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),

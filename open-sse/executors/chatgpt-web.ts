@@ -9,7 +9,12 @@ import { BaseExecutor, type ExecuteInput } from "./base.ts";
 const CHATGPT_WEB_URL = "https://chatgpt.com";
 
 function statusForAdapterError(message: string): number {
-  if (/storage state|credentials|connection ID/i.test(message)) return 401;
+  if (
+    /storage state|credentials|connection ID|reauthenticat|could not be authenticated/i.test(
+      message
+    )
+  )
+    return 401;
   // Preserve upstream quota semantics so the shared account-fallback loop can exclude a
   // depleted Free session and immediately try the next configured ChatGPT Web account.
   if (
@@ -19,6 +24,12 @@ function statusForAdapterError(message: string): number {
   ) {
     return 429;
   }
+  if (
+    /ChatGPT Web (?:browser|composer|session|did not confirm|requested .* unavailable)/i.test(
+      message
+    )
+  )
+    return 502;
   if (/request|messages|prompt|model|tools|text content|reasoning effort/i.test(message))
     return 400;
   return 502;

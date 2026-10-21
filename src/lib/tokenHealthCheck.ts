@@ -16,7 +16,6 @@ import {
   getProviderConnectionById,
   updateProviderConnection,
 } from "@/lib/db/providers";
-import { getCachedProviderConnectionById } from "@/lib/db/readCache";
 import { getSettings } from "@/lib/db/settings";
 import { resolveGuardedProxyConfig } from "@/lib/tokenHealthCheckProxyGuard";
 import {
@@ -557,7 +556,7 @@ export async function sweep(): Promise<number> {
 export async function checkConnection(conn) {
   if (!conn?.id) return;
 
-  const latestConnection = (await getCachedProviderConnectionById(conn.id)) || conn;
+  const latestConnection = (await getProviderConnectionById(conn.id)) || conn;
   conn = latestConnection;
 
   // Per-provider opt-out of proactive refresh (e.g. Codex/OpenAI cascade
@@ -1170,7 +1169,18 @@ export async function checkConnection(conn) {
     if (persistedResult) {
       await updateProviderConnection(conn.id, { lastHealthCheckAt: now });
     } else {
-      // No onPersist (e.g. no connectionId — token-hash dedup path). Write all fields.
+      // A shared refresh may have persisted through another caller's callback.
+      // Never replay its result over a newer credential rotation.
+      const current = await getProviderConnectionById(conn.id);
+      if (
+        current &&
+        (current.refreshToken !== attemptedRefreshToken ||
+          (current.accessToken || null) !== attemptedAccessToken)
+      ) {
+        await updateProviderConnection(conn.id, { lastHealthCheckAt: now });
+        return;
+      }
+      // No other caller persisted this result. Write the returned credentials.
       const updateData: any = {
         accessToken: result.accessToken,
         lastHealthCheckAt: now,

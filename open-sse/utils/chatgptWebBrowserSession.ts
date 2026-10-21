@@ -2,7 +2,6 @@ import { Buffer } from "node:buffer";
 
 import type { ChatGptWebResolvedAttachment } from "./chatgptWebAttachments.ts";
 import {
-  executeChatGptWebFirstPartyTurn,
   type ChatGptWebFirstPartyRequest,
   type ChatGptWebUiSelection,
 } from "./chatgptWebFirstParty.ts";
@@ -11,6 +10,8 @@ import {
   ChatGptWebTopicStream,
   parseChatGptWebConversationHandoff,
 } from "./chatgptWebTransport.ts";
+
+import { executeChatGptWebUiTurn, requireChatGptWebAuthenticatedUrl } from "./chatgptWebUiTurn.ts";
 
 type JsonRecord = Record<string, unknown>;
 type Page = import("playwright").Page;
@@ -407,8 +408,8 @@ export async function runChatGptWebBrowserTurn(
 /**
  * Playwright binding for a logged-in ChatGPT page.
  *
- * ChatGPT's own loaded module performs auth and Sentinel inside the page. The hot path never
- * touches the composer, model picker, attachment input, cookies, or bearer tokens.
+ * ChatGPT's own UI performs authentication and request preparation. Each executor request
+ * owns an isolated Temporary Chat page; cookies and bearer tokens remain inside its context.
  */
 export class PlaywrightChatGptWebBrowserSession implements ChatGptWebBrowserSession {
   private readonly pageUrl: string;
@@ -426,12 +427,12 @@ export class PlaywrightChatGptWebBrowserSession implements ChatGptWebBrowserSess
       this.pageUrl = options;
       this.selection = undefined;
       this.closePageOnCleanup = false;
-      this.executePageRequest = executeChatGptWebFirstPartyTurn;
+      this.executePageRequest = executeChatGptWebUiTurn;
     } else {
       this.pageUrl = options.pageUrl ?? "https://chatgpt.com/?temporary-chat=true";
       this.selection = options.selection;
       this.closePageOnCleanup = options.closePageOnCleanup === true;
-      this.executePageRequest = options.executePageRequest ?? executeChatGptWebFirstPartyTurn;
+      this.executePageRequest = options.executePageRequest ?? executeChatGptWebUiTurn;
     }
   }
 
@@ -455,7 +456,7 @@ export class PlaywrightChatGptWebBrowserSession implements ChatGptWebBrowserSess
       if (!currentIsFirstParty) {
         await this.page.goto(this.pageUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
       }
-      requireFirstPartyUrl(this.page.url());
+      requireChatGptWebAuthenticatedUrl(this.page.url());
       return cleanup;
     } catch (error) {
       await cleanup();

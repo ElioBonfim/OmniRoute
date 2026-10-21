@@ -131,7 +131,12 @@ export function normalizeChatGptWebStorageState(value: unknown): ChatGptWebStora
   }
   for (const cookie of value.cookies) validateCookie(cookie);
   for (const origin of value.origins) validateOrigin(origin);
-  return structuredClone(value) as unknown as ChatGptWebStorageState;
+  const normalized = structuredClone(value) as unknown as ChatGptWebStorageState;
+  // __Host- cookies must be host-only; a leading domain dot is rejected by Chromium.
+  for (const cookie of normalized.cookies) {
+    if (cookie.name.startsWith("__Host-")) cookie.domain = cookie.domain.replace(/^\./, "");
+  }
+  return normalized;
 }
 
 export function chatGptWebStorageStateFromCookieHeader(raw: string): ChatGptWebStorageState {
@@ -156,7 +161,7 @@ export function chatGptWebStorageStateFromCookieHeader(raw: string): ChatGptWebS
     cookies: cookies.map(([name, value]) => ({
       name,
       value,
-      domain: ".chatgpt.com",
+      domain: name.startsWith("__Host-") ? "chatgpt.com" : ".chatgpt.com",
       path: "/",
       expires: -1,
       httpOnly: name.startsWith("__Secure-") || name.startsWith("__Host-"),
@@ -367,13 +372,12 @@ async function createDefaultSession(
     headless: false,
     executablePath: input.chromeExecutablePath,
   });
-  const page =
-    pooled.warmupPage && !pooled.warmupPage.isClosed() ? pooled.warmupPage : await openPage(pooled);
-  if (pooled.warmupPage !== page) pooled.warmupPage = page;
+  // Never share a composer between concurrent requests or reuse a previous temporary turn.
+  const page = await openPage(pooled);
   return new PlaywrightChatGptWebBrowserSession(page, {
     pageUrl: CHATGPT_WEB_PAGE_URL,
     selection: input.selection,
-    closePageOnCleanup: false,
+    closePageOnCleanup: true,
   });
 }
 

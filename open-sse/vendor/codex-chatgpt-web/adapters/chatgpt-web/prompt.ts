@@ -30,6 +30,8 @@ export interface ChatGptWebPromptFile {
 }
 
 export interface CompiledChatGptWebPrompt {
+  /** Trusted identity returned by the turn broker, never inferred from user text. */
+  turnToken?: string;
   text: string;
   images: ChatGptWebPromptImage[];
   files: ChatGptWebPromptFile[];

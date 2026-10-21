@@ -246,6 +246,7 @@ export class LauncherBrowserHelperClient {
           traceId: turn.traceId,
           modelId: turn.modelId,
           reasoning: turn.reasoning,
+          ...(turn.modelFamily ? { modelFamily: turn.modelFamily } : {}),
           capabilities: turn.capabilities,
           ...(turn.nativeConnector ? { nativeConnector: true } : {}),
           ...(turn.prepareResume ? { resumeAvailable: true } : {}),
@@ -450,6 +451,7 @@ export class LauncherBrowserHelperClient {
                 id: message.id,
                 prepared: {
                   text: prepared.text,
+                  ...(prepared.turnToken ? { turnToken: prepared.turnToken } : {}),
                   images: prepared.images,
                   files: prepared.files,
                   ...(prepared.multipart ? { multipart: prepared.multipart } : {}),

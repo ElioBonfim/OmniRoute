@@ -46,6 +46,7 @@ export function chatGptConversationKey(
         namespace,
         threadId: identity.threadId,
         modelId: parsed.modelId,
+        ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         reasoning: parsed.options.reasoning,
         compaction: compactionEpoch(raw?.input),
       })

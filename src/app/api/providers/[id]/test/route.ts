@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
-import { getCachedProviderConnectionById } from "@/lib/db/readCache";
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/providers";
 import { isCloudEnabled, resolveProxyForConnection } from "@/lib/db/settings";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
@@ -72,7 +71,10 @@ function hasQoderToken(connection: any): boolean {
 
 // GHSA-jmq6-8j86-8xqj: getCliRuntimeStatus() spawns on the host (LOCAL_ONLY capability),
 // but these routes stay remote-reachable — only loopback/LAN callers and the scheduler probe.
-export type ConnectionTestOptions = { allowLocalRuntimeProbe?: boolean };
+export type ConnectionTestOptions = {
+  allowLocalRuntimeProbe?: boolean;
+  allowClaudeRefresh?: boolean;
+};
 
 export async function getProviderRuntimeStatus(
   connection: any,
@@ -351,7 +353,8 @@ export function isReactive400Recoverable(args: {
  */
 export async function testOAuthConnection(
   connection: any,
-  timeoutMs: number = OAUTH_TEST_TIMEOUT_MS
+  timeoutMs: number = OAUTH_TEST_TIMEOUT_MS,
+  allowClaudeRefresh = false
 ) {
   const config = OAUTH_TEST_CONFIG[connection.provider];
 
@@ -392,26 +395,35 @@ export async function testOAuthConnection(
   let newTokens = null;
 
   // Auto-refresh if token is expired and provider supports refresh.
-  // Front 2: NEVER burn a rotating provider's single-use refresh_token from a
-  // connection test. Under a shared Auth0 client (Codex/OpenAI) a test-time
-  // refresh can cascade-invalidate sibling accounts' refresh_token families
-  // (openai/codex#9648). Leave rotation to the reactive, mutex-guarded 401 path.
+  // Background tests never rotate single-use tokens. An explicit Claude retest
+  // may renew an expired token through the existing serialized persistence path.
   const tokenExpired = isTokenExpired(connection);
   const isRotatingProvider = rotationGroupFor(connection.provider) !== null;
-  if (config.refreshable && tokenExpired && connection.refreshToken && !isRotatingProvider) {
+  if (
+    config.refreshable &&
+    tokenExpired &&
+    connection.refreshToken &&
+    (!isRotatingProvider || (connection.provider === "claude" && allowClaudeRefresh))
+  ) {
     const tokens = await refreshOAuthToken(connection);
-    if (tokens) {
+    if (tokens?.accessToken) {
       accessToken = tokens.accessToken;
       refreshed = true;
       newTokens = tokens;
     } else {
       // Refresh failed
-      const error = "Token expired and refresh failed";
+      const error =
+        tokens?.error === "unrecoverable_refresh_error"
+          ? "Refresh token expired or consumed. Please re-authenticate this account."
+          : "Token expired and refresh failed";
       return {
         valid: false,
         error,
         refreshed: false,
-        diagnosis: classifyFailure({ error, refreshFailed: true }),
+        diagnosis:
+          tokens?.error === "unrecoverable_refresh_error"
+            ? makeDiagnosis("expired", "oauth", error, tokens.code || "expired")
+            : classifyFailure({ error, refreshFailed: true }),
       };
     }
   }
@@ -430,19 +442,6 @@ export async function testOAuthConnection(
     }
     // Check if token is expired (no refresh available)
     if (tokenExpired) {
-      // Front 2: for rotating providers we intentionally did NOT refresh above.
-      // An expired access_token here is recoverable on next real use via the
-      // reactive 401 path, so don't report the account as broken (which would
-      // tempt the operator to re-test and never resolve). Keep it active.
-      if (isRotatingProvider && connection.refreshToken) {
-        return {
-          valid: true,
-          error: null,
-          refreshed: false,
-          newTokens: null,
-          diagnosis: makeDiagnosis("ok", "oauth", null, null),
-        };
-      }
       const error = "Token expired";
       return {
         valid: false,
@@ -699,7 +698,7 @@ export async function testOAuthConnection(
       typeof connection.refreshToken === "string"
     ) {
       const tokens = await refreshOAuthToken(connection);
-      if (tokens) {
+      if (tokens?.accessToken) {
         // Retry with new token
         const retryInit: RequestInit = {
           method: builtProbe?.method ?? config.method,
@@ -802,7 +801,10 @@ export async function testOAuthConnection(
           diagnosis: classifyFailure({ error, statusCode: retryRes.status }),
         };
       }
-      const error = "Token expired and refresh failed";
+      const error =
+        tokens?.error === "unrecoverable_refresh_error"
+          ? "Refresh token expired or consumed. Please re-authenticate this account."
+          : "Token expired and refresh failed";
       return {
         valid: false,
         error,
@@ -942,7 +944,7 @@ export async function testSingleConnection(
   validationModelId?: string,
   options: ConnectionTestOptions = {}
 ) {
-  const connection = await getCachedProviderConnectionById(connectionId);
+  const connection = await getProviderConnectionById(connectionId);
 
   if (!connection) {
     return { valid: false, error: "Connection not found", diagnosis: null, latencyMs: 0 };
@@ -1022,7 +1024,7 @@ export async function testSingleConnection(
     );
   } else {
     result = await runWithProxyContext(proxyInfo?.proxy || null, () =>
-      testOAuthConnection(connection)
+      testOAuthConnection(connection, OAUTH_TEST_TIMEOUT_MS, options.allowClaudeRefresh)
     );
   }
 
@@ -1077,6 +1079,9 @@ export async function testSingleConnection(
 
   const now = new Date().toISOString();
   const diagnosis =
+    (!result.valid && latest.errorCode === "invalid_grant"
+      ? makeDiagnosis("expired", "oauth", latest.lastError || result.error, "expired")
+      : null) ||
     result.diagnosis ||
     (result.valid
       ? makeDiagnosis("ok", "local", null, null)
@@ -1091,7 +1096,8 @@ export async function testSingleConnection(
   const terminalTestStatuses = new Set(["banned", "expired", "credits_exhausted"]);
   const isTerminalFailure =
     !result.valid &&
-    terminalTestStatuses.has(String(diagnosis.code ?? diagnosis.type ?? "").toLowerCase());
+    (terminalTestStatuses.has(String(diagnosis.code ?? "").toLowerCase()) ||
+      terminalTestStatuses.has(String(diagnosis.type ?? "").toLowerCase()));
   const testFailureCooldownMs = result.valid ? 0 : 30_000; // 30s retry window
 
   // A successful credential probe proves the KEY is valid. It does NOT prove the
@@ -1110,13 +1116,20 @@ export async function testSingleConnection(
   const lastErrorType = result.valid ? connection.lastErrorType : diagnosis.type;
 
   const updateData: Record<string, any> = {
-    testStatus: clearErrorState ? "active" : result.valid ? connection.testStatus : "error",
+    testStatus: clearErrorState
+      ? "active"
+      : result.valid
+        ? latest.testStatus
+        : isTerminalFailure
+          ? diagnosis.type
+          : "error",
     // A passing test is the sole activation signal under the "only advertise tested-working
     // connections" default (POST /api/providers creates connections isActive:false). Only ever
     // flips ON: a failing test leaves isActive untouched (a transient failure must not take a
     // working connection out of rotation — the cooldown/rateLimitedUntil below handles that), so
-    // this never deactivates anything, nor re-enables an operator-disabled one.
+    // terminal credential failures deactivate; operator-disabled accounts stay off.
     ...(result.valid && !operatorDisabled ? { isActive: true } : {}),
+    ...(!result.valid && isTerminalFailure ? { isActive: false } : {}),
     lastError: clearErrorState ? null : result.valid ? connection.lastError : result.error,
     lastErrorAt: clearErrorState ? null : result.valid ? connection.lastErrorAt : now,
     lastTested: now,
@@ -1149,15 +1162,8 @@ export async function testSingleConnection(
     if (recovered) updateData.providerSpecificData = recovered;
   }
 
-  if (result.refreshed && result.newTokens) {
-    updateData.accessToken = result.newTokens.accessToken;
-    if (result.newTokens.refreshToken) {
-      updateData.refreshToken = result.newTokens.refreshToken;
-    }
-    if (result.newTokens.expiresIn) {
-      updateData.expiresAt = new Date(Date.now() + result.newTokens.expiresIn * 1000).toISOString();
-    }
-  }
+  // Credential rotation is persisted inside refreshOAuthToken's mutex.
+  // Never replay an older token pair after the lock has been released.
 
   // Update status in db
   await updateProviderConnection(connectionId, updateData);
@@ -1235,6 +1241,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const data = await testSingleConnection(id, validationModelId, {
       allowLocalRuntimeProbe: getRequestPeerLocality(request) !== "remote",
+      allowClaudeRefresh: true,
     });
 
     if (data.error === "Connection not found") {

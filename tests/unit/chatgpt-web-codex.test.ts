@@ -40,6 +40,7 @@ import {
   TurnBroker,
 } from "../../open-sse/vendor/codex-chatgpt-web/adapters/chatgpt-web/turn-broker.ts";
 import {
+  chatGptConversationUrl,
   chatGptPromptFilePayloads,
   insertPlainTextAtComposerSelection,
   mergeChatGptRuntimeStorageState,
@@ -83,7 +84,7 @@ test("registers the additive ChatGPT Web Codex provider and current fixed routes
   assert.equal(CHATGPT_WEB_CODEX_CONNECTOR_NAME, CHATGPT_CONNECTOR_NAME);
   assert.equal(chatgpt_web_codexProvider.id, "chatgpt-web-codex");
   assert.deepEqual(
-    chatgpt_web_codexProvider.models?.map((model) => model.id),
+    chatgpt_web_codexProvider.models?.slice(0, 7).map((model) => model.id),
     ["luna", "think", "instant", "medium", "high", "extra-high", "pro"]
   );
   assert.deepEqual(
@@ -971,4 +972,19 @@ test("a previous_response_id binding miss does not cool down the ChatGPT Web Cod
   assert.equal(result.shouldFallback, false);
   assert.equal(result.cooldownMs, 0);
   assert.equal(result.skipProviderBreaker, true);
+});
+
+test("saved ChatGPT conversations require explicit per-provider opt-in", () => {
+  const provider = { adapter: "chatgpt-web" as const, baseUrl: "https://chatgpt.com" };
+  assert.equal(resolveBrowserConfig(provider).useSavedChats, false);
+  assert.equal(chatGptConversationUrl(false), "https://chatgpt.com/?temporary-chat=true");
+  assert.equal(chatGptConversationUrl(true), "https://chatgpt.com/");
+  assert.equal(
+    resolveBrowserConfig({ ...provider, chatgptWeb: { useSavedChats: true } }).useSavedChats,
+    true
+  );
+  assert.equal(
+    resolveBrowserConfig({ ...provider, chatgptWeb: { useSavedChats: false } }).useSavedChats,
+    false
+  );
 });

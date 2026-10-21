@@ -41,7 +41,7 @@ export function parseTokenExpiryMs(expiresAt: unknown): number {
 
 export function getEffectiveTokenExpiryIso(conn: any): string | null {
   if (!conn || typeof conn !== "object") return null;
-  return conn.tokenExpiresAt || conn.expiresAt || null;
+  return conn.expiresAt || conn.tokenExpiresAt || null;
 }
 
 export function getEffectiveTokenExpiryMs(conn: any): number {

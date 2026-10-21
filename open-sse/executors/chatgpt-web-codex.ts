@@ -28,7 +28,11 @@ import type {
   CodexProviderConfig,
 } from "../vendor/codex-chatgpt-web/types.ts";
 import { BaseExecutor, type ExecuteInput, type ExecutorExecuteResult } from "./base.ts";
-import { reasoningEffortOf, requireChatGptWebCodexRoute } from "./chatgpt-web-codex/models.ts";
+import {
+  reasoningEffortOf,
+  requireChatGptWebCodexRoute,
+  type ChatGptWebCodexModelRoute,
+} from "./chatgpt-web-codex/models.ts";
 import {
   connectionRuntimePaths,
   ensureConnectionStorageStateFromCredential,
@@ -63,7 +67,7 @@ function errorResponse(status: number, message: unknown, code = "chatgpt_web_cod
 function wrapped(response: Response, body: unknown): ExecutorExecuteResult {
   return {
     response,
-    url: "https://chatgpt.com/?temporary-chat=true",
+    url: "https://chatgpt.com/",
     headers: {},
     transformedBody: body,
     transport: "chatgpt-web-browser",
@@ -170,10 +174,10 @@ function buildProviderConfig(
   input: ExecuteInput,
   parsed: CodexParsedRequest,
   storageStatePath: string,
-  connectionId: string
+  connectionId: string,
+  route: ChatGptWebCodexModelRoute
 ): CodexProviderConfig {
   const data = record(input.credentials.providerSpecificData);
-  const route = requireChatGptWebCodexRoute(input.model);
   const paths = connectionRuntimePaths(connectionId);
   const cdpEndpoint =
     configuredString(data, "browserCdpEndpoint") ?? process.env.CHATGPT_WEB_CODEX_CDP_URL;
@@ -204,6 +208,8 @@ function buildProviderConfig(
 
   parsed.modelId = route.backendModel;
   parsed.options.reasoning = route.effort;
+  if (route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
+  else delete parsed._chatgptModelFamily;
 
   return {
     adapter: "chatgpt-web",
@@ -212,6 +218,8 @@ function buildProviderConfig(
     models: [route.backendModel],
     chatgptWeb: {
       appName: connector,
+      useSavedChats: data.useSavedChats === true,
+      labelSavedConversations: data.labelSavedConversations === true,
       storageStatePath,
       ...(chromeExecutablePath ? { chromeExecutablePath } : {}),
       ...(cdpEndpoint ? { cdpEndpoint } : {}),
@@ -305,14 +313,14 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
       const parsed = parseRequest(expandedBody);
       responseStateNamespace(connectionId, parsed);
 
-      const route = requireChatGptWebCodexRoute(input.model);
-      const explicitEffort = reasoningEffortOf(initialBody);
-      const normalizedEffort = explicitEffort === "ultra" ? "max" : explicitEffort;
-      if (normalizedEffort && normalizedEffort !== route.effort) {
+      let route: ChatGptWebCodexModelRoute;
+      try {
+        route = requireChatGptWebCodexRoute(input.model, reasoningEffortOf(initialBody));
+      } catch (error) {
         return wrapped(
           errorResponse(
             400,
-            `Requested reasoning effort ${explicitEffort} is incompatible with model ${route.id}`,
+            error instanceof Error ? error.message : "Invalid Web model or effort",
             "incompatible_reasoning_effort"
           ),
           initialBody
@@ -384,7 +392,8 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
         },
         parsed,
         storageStatePath,
-        connectionId
+        connectionId,
+        route
       );
       const adapter = createChatGptWebAdapter(provider);
       const worker = ChatGptBrowserWorker.forProvider(provider);

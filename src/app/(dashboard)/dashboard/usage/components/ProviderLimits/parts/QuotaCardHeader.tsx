@@ -58,7 +58,7 @@ export default function QuotaCardHeader({
   // credential embeds a JWT with an exp claim — surface the same countdown.
   const tokenExpiryIso =
     connection.authType === "oauth"
-      ? connection.tokenExpiresAt || connection.expiresAt || null
+      ? connection.expiresAt || connection.tokenExpiresAt || null
       : readCookieExpiresAt(connection.providerSpecificData);
   const tokenExpiryMs = tokenExpiryIso ? new Date(tokenExpiryIso).getTime() : NaN;
   const hasTokenExpiry = Number.isFinite(tokenExpiryMs);

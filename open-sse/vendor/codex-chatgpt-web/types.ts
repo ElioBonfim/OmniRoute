@@ -1,5 +1,7 @@
 /* Adapted from miuuyy/codex-chatgpt-web v4.0.7 commit b59d7dc51b84fb1f465ff1d00f5207f3b2b4a494 (MIT). */
 export interface CodexParsedRequest {
+  /** Trusted route identity, never taken from caller metadata. */
+  _chatgptModelFamily?: "5.6" | "6";
   modelId: string;
   previousResponseId?: string;
   context: CodexContext;
@@ -268,7 +270,11 @@ export interface CodexProviderConfig {
   modelDefaultReasoningEfforts?: Record<string, string>;
   noReasoningModels?: string[];
   chatgptWeb?: {
-    /** ChatGPT custom connector attached to tool-capable temporary chats. */
+    /** Opt into saved chats when the account cannot expose connectors in Temporary Chat. */
+    useSavedChats?: boolean;
+    /** Label newly created saved chats with the OmniRoute date, project and native session. */
+    labelSavedConversations?: boolean;
+    /** ChatGPT custom connector attached to tool-capable chats. */
     appName?: string;
     /** Explicit browser owner. Launcher mode attaches to the embedded Electron ChatGPT surface. */
     browserHost?: "managed-chrome" | "launcher";

@@ -132,13 +132,18 @@ export function resolveStreamReadinessTimeout(
     };
   }
 
+  // Browser startup, connector attachment and deliberate reasoning share this
+  // pre-content window. Keep it aligned with the Web adapter stall budget.
+  const nativeBrowserWarmupMs =
+    (input.provider || "").toLowerCase() === "chatgpt-web-codex" ? 300_000 : 0;
   const maxTimeoutMs = Math.max(
     baseTimeoutMs,
     input.maxTimeoutMs ?? DEFAULT_MAX_TIMEOUT_MS,
-    input.cascadeTimeoutMs ?? 0
+    input.cascadeTimeoutMs ?? 0,
+    nativeBrowserWarmupMs
   );
-  const reasons: string[] = [];
-  let timeoutMs = baseTimeoutMs;
+  const reasons: string[] = nativeBrowserWarmupMs ? ["native_browser_warmup"] : [];
+  let timeoutMs = Math.max(baseTimeoutMs, nativeBrowserWarmupMs);
 
   const inputCount = countArrayField(input.body, "input");
   const messageCount = countArrayField(input.body, "messages");

@@ -171,7 +171,9 @@ export async function injectMemoryAndSkills({
     }
   }
 
-  if (memoryOwnerId && memorySettings?.enabled && body.stream !== true) {
+  // Clean Room supports text and attachments, but cannot execute injected tool calls.
+  const supportsServerTools = provider !== "chatgpt-web";
+  if (supportsServerTools && memoryOwnerId && memorySettings?.enabled && body.stream !== true) {
     // Server-side builtin memory tools (memory_save/update/search/delete) are
     // executed by the gateway's tool-call interception, which runs only on the
     // non-stream path. Stream clients (opencode etc.) execute tools client-side,
@@ -218,7 +220,12 @@ export async function injectMemoryAndSkills({
     }
   }
 
-  if (memoryOwnerId && memorySettings?.skillsEnabled && body.stream !== true) {
+  if (
+    supportsServerTools &&
+    memoryOwnerId &&
+    memorySettings?.skillsEnabled &&
+    body.stream !== true
+  ) {
     // Ensure the registry cache is warm before listing: on a cold/fresh
     // process skills that exist only in the DB would be missed (false
     // negative -> silent skip). loadFromDatabase() is a no-op when the cache

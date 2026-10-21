@@ -601,3 +601,51 @@ test("mergeInjectedFallbackOwnerNames: no preConversionClientToolNames provided 
 
   assert.deepEqual(result.builtinToolNames, ["omniroute_web_search"]);
 });
+
+test("Clean Room skips server tools while preserving explicit client tools", async () => {
+  const { updateSettings } = await import("../../src/lib/db/settings.ts");
+  const { invalidateMemorySettingsCache } = await import("../../src/lib/memory/settings.ts");
+  await updateSettings({ memoryEnabled: true, memoryMaxTokens: 0, skillsEnabled: true });
+  invalidateMemorySettingsCache();
+  resetSkillsRegistry();
+  await skillRegistry.register({
+    name: "cleanroom-fixture",
+    version: "1.0.0",
+    description: "fixture",
+    schema: { input: {}, output: {} },
+    handler: "test-handler",
+    enabled: true,
+    apiKeyId: "owner-cleanroom",
+    mode: "on",
+  });
+  const clientTool = {
+    type: "function",
+    function: { name: "explicit_client_tool", description: "preserve me" },
+  };
+  const result = await injectMemoryAndSkills({
+    body: { messages: [{ role: "user", content: "hello" }], tools: [clientTool] },
+    memoryOwnerId: "owner-cleanroom",
+    provider: "chatgpt-web",
+    effectiveModel: "gpt-5-6",
+    sourceFormat: FORMATS.OPENAI,
+    targetFormat: FORMATS.OPENAI,
+    backgroundReason: null,
+    log: null,
+  });
+  assert.deepEqual(result.body.tools, [clientTool]);
+  assert.deepEqual(result.builtinToolNames, []);
+  assert.deepEqual(result.injectedCustomSkillNames, []);
+  const plain = await injectMemoryAndSkills({
+    body: { messages: [{ role: "user", content: "hello" }] },
+    memoryOwnerId: "owner-cleanroom",
+    provider: "chatgpt-web",
+    effectiveModel: "gpt-5-6",
+    sourceFormat: FORMATS.OPENAI,
+    targetFormat: FORMATS.OPENAI,
+    backgroundReason: null,
+    log: null,
+  });
+  assert.equal("tools" in plain.body, false);
+  resetSkillsRegistry();
+  invalidateMemorySettingsCache();
+});

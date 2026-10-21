@@ -383,3 +383,16 @@ test("does not treat an unrelated id containing 'thinking' as an alias suffix", 
   assert.equal(result.timeoutMs, 80_000);
   assert.ok(!result.reasons.includes("extended_thinking"));
 });
+
+test("native Web Codex reasoning receives the browser's five-minute warm-up budget", () => {
+  const result = resolveStreamReadinessTimeout({
+    baseTimeoutMs: 80_000,
+    maxTimeoutMs: 180_000,
+    provider: "chatgpt-web-codex",
+    model: "gpt-6-sol",
+    body: { reasoning: { effort: "xhigh" } },
+  });
+  assert.equal(result.timeoutMs, 300_000);
+  assert.equal(result.maxTimeoutMs, 300_000);
+  assert(result.reasons.includes("native_browser_warmup"));
+});

@@ -176,6 +176,7 @@ function executionKey(parsed: CodexParsedRequest, payload: unknown): string {
       JSON.stringify({
         modelId: parsed.modelId,
         reasoning: parsed.options.reasoning,
+        ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         payload,
       })
     )

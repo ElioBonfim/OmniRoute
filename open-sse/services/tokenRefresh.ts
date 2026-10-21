@@ -634,12 +634,7 @@ export async function getAccessToken(
   // the legacy `connectionId`-less path would silently swallow the callback,
   // leaving DB rows out of sync with rotated tokens (Codex/OpenAI). We still
   // resolve the promise to all waiters with the refreshed credentials.
-  const refreshPromise = _getAccessTokenWithStalenessCheck(
-    provider,
-    credentials,
-    log,
-    proxyConfig
-  )
+  const refreshPromise = _getAccessTokenWithStalenessCheck(provider, credentials, log, proxyConfig)
     .then(async (result) => {
       if (result?.accessToken && effectiveOnPersist) {
         // #4038: same compare-and-swap guard as Layer 1 — skip the persist if a concurrent
@@ -689,15 +684,6 @@ async function _getAccessTokenWithStalenessCheck(provider, credentials, log, pro
 }
 
 async function _refreshWithFreshCredentials(provider, credentials, log, proxyConfig) {
-  const rotated = lookupRotation(provider, credentials.refreshToken);
-  if (rotated) {
-    log?.info?.(
-      "TOKEN_REFRESH",
-      `Rotation map hit for ${provider}. Returning cached rotated tokens (avoids family-revoke).`
-    );
-    return rotated.result;
-  }
-
   if (credentials.connectionId) {
     try {
       const { getProviderConnectionById } = await import("@/lib/db/providers");
@@ -730,6 +716,15 @@ async function _refreshWithFreshCredentials(provider, credentials, log, proxyCon
         `Failed to check DB for stale token: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+  }
+
+  const rotated = lookupRotation(provider, credentials.refreshToken);
+  if (rotated) {
+    log?.info?.(
+      "TOKEN_REFRESH",
+      `Rotation map hit for ${provider}. Returning cached rotated tokens (avoids family-revoke).`
+    );
+    return rotated.result;
   }
 
   const oldRefreshToken = credentials.refreshToken;

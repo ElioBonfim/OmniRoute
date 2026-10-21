@@ -1,9 +1,11 @@
-import { updateProviderConnection } from "@/lib/db/providers";
+import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/providers";
 import type { BaseExecutor } from "@omniroute/open-sse/executors/base";
 import {
   rotationGroupFor,
   serializeRefresh,
 } from "@omniroute/open-sse/services/refreshSerializer.ts";
+
+import { getAccessToken } from "@omniroute/open-sse/services/tokenRefresh.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -109,7 +111,7 @@ export async function refreshAndUpdateCredentialsWithResolver(
     connectionId: connection.id,
     accessToken: connection.accessToken,
     refreshToken: connection.refreshToken,
-    expiresAt: connection.tokenExpiresAt || connection.expiresAt || null,
+    expiresAt: connection.expiresAt || connection.tokenExpiresAt || null,
     providerSpecificData: connection.providerSpecificData,
     copilotToken: connection.providerSpecificData?.copilotToken,
     copilotTokenExpiresAt: connection.providerSpecificData?.copilotTokenExpiresAt,
@@ -119,9 +121,25 @@ export async function refreshAndUpdateCredentialsWithResolver(
     return { connection, refreshed: false };
   }
 
-  const refreshResult = (await serializeRefresh(connection.provider, () =>
-    executor.refreshCredentials(credentials, console)
-  )) as CredentialRefreshResult | null;
+  // Claude's centralized refresh already owns the group lane and per-account
+  // mutex. Nesting another group lane deadlocks; writing after it releases can
+  // restore an already-consumed refresh token.
+  const refreshResult = (
+    connection.provider === "claude"
+      ? await getAccessToken(connection.provider, credentials, console, null, async (tokens) => {
+          await updateProviderConnection(
+            connection.id,
+            buildCredentialUpdateData(connection, tokens)
+          );
+        })
+      : await serializeRefresh(connection.provider, () =>
+          executor.refreshCredentials(credentials, console)
+        )
+  ) as CredentialRefreshResult | null;
+
+  if (refreshResult?.error === "unrecoverable_refresh_error") {
+    throw withStatus(new Error("Refresh token rejected. Please re-authorize the connection."), 401);
+  }
 
   if (!refreshResult) {
     if (connection.accessToken) {
@@ -131,6 +149,11 @@ export async function refreshAndUpdateCredentialsWithResolver(
       new Error("Failed to refresh credentials. Please re-authorize the connection."),
       401
     );
+  }
+
+  if (connection.provider === "claude") {
+    const saved = await getProviderConnectionById(connection.id);
+    return { connection: saved || connection, refreshed: !!refreshResult.accessToken };
   }
 
   const updateData = buildCredentialUpdateData(connection, refreshResult);

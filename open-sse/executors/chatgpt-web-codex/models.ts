@@ -6,6 +6,8 @@ export interface ChatGptWebCodexModelRoute {
   effort: ChatGptWebCodexEffort;
   pro: boolean;
   sol: boolean;
+  modelFamily?: "5.6" | "6";
+  supportedEfforts?: readonly ChatGptWebCodexEffort[];
 }
 
 const ROUTES = new Map<string, ChatGptWebCodexModelRoute>([
@@ -27,11 +29,43 @@ const ROUTES = new Map<string, ChatGptWebCodexModelRoute>([
   ["pro", { id: "pro", backendModel: "gpt-5.6-sol", effort: "max", pro: true, sol: true }],
 ]);
 
-export function requireChatGptWebCodexRoute(model: string): ChatGptWebCodexModelRoute {
+for (const modelFamily of ["5.6", "6"] as const) {
+  for (const variant of ["sol", "sol-instant", "pro"] as const) {
+    const id = `gpt-${modelFamily}-${variant}`;
+    const effort = variant === "pro" ? "max" : variant === "sol-instant" ? "low" : "high";
+    ROUTES.set(id, {
+      id,
+      // This is the shared browser transport/context profile. Exact model
+      // identity is selected and verified separately in the browser.
+      backendModel: "gpt-5.6-sol",
+      modelFamily,
+      effort,
+      supportedEfforts: variant === "sol" ? ["medium", "high", "xhigh"] : [effort],
+      pro: variant === "pro",
+      sol: true,
+    });
+  }
+}
+
+export function requireChatGptWebCodexRoute(
+  model: string,
+  requestedEffort?: string
+): ChatGptWebCodexModelRoute {
   const normalized = model.replace(/^chatgpt-web-codex\//, "");
   const route = ROUTES.get(normalized);
   if (!route) throw new Error(`Unsupported ChatGPT Web (Codex) model: ${model}`);
-  return route;
+  const effort = !route.modelFamily && requestedEffort === "ultra" ? "max" : requestedEffort;
+  const supported = route.supportedEfforts ?? [route.effort];
+  if (effort && !supported.includes(effort as ChatGptWebCodexEffort)) {
+    throw new Error(
+      `Requested reasoning effort ${requestedEffort} is incompatible with model ${route.id}`
+    );
+  }
+  return {
+    ...route,
+    effort: (effort ?? route.effort) as ChatGptWebCodexEffort,
+    pro: route.pro || effort === "xhigh",
+  };
 }
 
 export function reasoningEffortOf(body: Record<string, unknown>): string | undefined {
