@@ -3408,22 +3408,37 @@ export class ChatGptBrowserWorker {
     const imageFiles = files.slice(0, prompt.images.length);
     const documentFiles = files.slice(prompt.images.length);
     if (imageFiles.length > 0) {
-      const imageInput = page.locator('input[data-testid="upload-photos-input"]');
+      const imageInput = composerForm
+        .locator(
+          'input[data-testid="upload-photos-input"], input[type="file"][multiple][accept="image/*"]'
+        )
+        .first();
       await imageInput.waitFor({ state: "attached", timeout: 20_000 });
       await imageInput.setInputFiles(imageFiles);
     }
     if (documentFiles.length > 0) {
-      const fileInput = page.locator('input[type="file"]#upload-files');
+      const fileInput = composerForm
+        .locator(
+          'input[type="file"]#upload-files, input[type="file"][multiple]:not([accept]), input[type="file"][multiple][accept=""]'
+        )
+        .first();
       await fileInput.waitFor({ state: "attached", timeout: 20_000 });
       await fileInput.setInputFiles(documentFiles);
     }
     try {
       await Promise.all(
-        files.map((file) =>
-          composerForm
-            .getByRole("group", { name: file.name, exact: true })
-            .waitFor({ state: "visible", timeout: 60_000 })
-        )
+        files.map((file) => {
+          // ChatGPT may append a duplicate counter when the same file is attached again.
+          const extension = extname(file.name);
+          const stem = extension ? file.name.slice(0, -extension.length) : file.name;
+          const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const name = new RegExp(`^${escape(stem)}(?:\\(\\d+\\))?${escape(extension)}$`);
+          return composerForm
+            .getByRole("group", { name })
+            .or(composerForm.getByRole("button", { name }))
+            .first()
+            .waitFor({ state: "visible", timeout: 60_000 });
+        })
       );
     } catch {
       const alerts = (
