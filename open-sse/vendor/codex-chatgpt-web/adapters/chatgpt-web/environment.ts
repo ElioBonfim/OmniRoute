@@ -103,9 +103,38 @@ function contextualUserMessage(value: Record<string, unknown>): boolean {
   const text = rawMessageText(value).trim();
   return (
     /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ||
+    isNativeOpenPageContext(value) ||
     /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text) ||
     isReadableCompactionSummaryText(text) ||
     text === OPAQUE_COMPACTION_NOTE
+  );
+}
+
+/** Native Page metadata is context, not a new human instruction or environment authority. */
+function isNativeOpenPageContext(item: Record<string, unknown> | undefined): boolean {
+  if (
+    item?.type !== "message" ||
+    item.role !== "user" ||
+    typeof item.id !== "string" ||
+    !item.id ||
+    !itemTurnId(item)?.trim()
+  )
+    return false;
+  const kinds = record(item.internal_chat_message_metadata_passthrough)?.content_item_kinds;
+  if (
+    !Array.isArray(kinds) ||
+    kinds.length !== 1 ||
+    kinds[0] !== "additional_content.codex_apps_open_page"
+  )
+    return false;
+  const content = item.content;
+  return (
+    Array.isArray(content) &&
+    content.length === 1 &&
+    record(content[0])?.type === "input_text" &&
+    /^<external_codex_apps_open_page>[^<>]*<\/external_codex_apps_open_page>$/.test(
+      rawMessageText(item).trim()
+    )
   );
 }
 
@@ -192,7 +221,10 @@ function environmentBeforeUser(
 
   let candidateIndex = userIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && candidate.role === "developer") {
+  while (
+    candidate?.type === "message" &&
+    (candidate.role === "developer" || isNativeOpenPageContext(candidate))
+  ) {
     const developerTurnId = itemTurnId(candidate);
     if (developerTurnId !== userTurnId) return undefined;
     candidateIndex -= 1;
@@ -375,7 +407,10 @@ function canonicalMetadataEnvironmentBeforeUser(
 
   let candidateIndex = userIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && candidate.role === "developer") {
+  while (
+    candidate?.type === "message" &&
+    (candidate.role === "developer" || isNativeOpenPageContext(candidate))
+  ) {
     const developerTurnId = itemTurnId(candidate);
     const serverOwnedId = typeof candidate.id === "string" && candidate.id.length > 0;
     if (developerTurnId === undefined ? !serverOwnedId : developerTurnId !== metadataTurnId)
@@ -430,7 +465,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   const input = Array.isArray(body?.input) ? body.input : [];
   let activeUserIndex = -1;
   for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (record(input[index])?.role === "user") {
+    if (record(input[index])?.role === "user" && !isNativeOpenPageContext(record(input[index]))) {
       activeUserIndex = index;
       break;
     }
