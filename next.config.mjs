@@ -357,6 +357,9 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   webpack(config, { dev, webpack }) {
+    // Production cache serialization retains several GB after compilation on the
+    // 8 GB operator host. A cold build avoids that peak without changing output.
+    if (!dev) config.cache = false;
     config.ignoreWarnings = [
       ...(config.ignoreWarnings || []),
       isNextIntlExtractorDynamicImportWarning,
