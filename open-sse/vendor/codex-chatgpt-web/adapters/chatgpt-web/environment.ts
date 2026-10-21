@@ -99,15 +99,44 @@ function rawMessageText(value: Record<string, unknown>): string {
     .join("\n");
 }
 
-function contextualUserMessage(value: Record<string, unknown>): boolean {
+function contextualUserMessage(value: Record<string, unknown>, expectedTurnId?: string): boolean {
   const text = rawMessageText(value).trim();
   return (
     /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ||
     isNativeOpenPageContext(value) ||
+    isNativeSelectedSkillContext(value, expectedTurnId) ||
     /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text) ||
     isReadableCompactionSummaryText(text) ||
     text === OPAQUE_COMPACTION_NOTE
   );
+}
+
+/** Selected skills are native context items; only the human request identifies a task revision. */
+function isNativeSelectedSkillContext(
+  item: Record<string, unknown> | undefined,
+  expectedTurnId?: string
+): boolean {
+  if (
+    item?.type !== "message" ||
+    item.role !== "user" ||
+    typeof item.id !== "string" ||
+    !item.id ||
+    !itemTurnId(item)?.trim() ||
+    (expectedTurnId && itemTurnId(item) !== expectedTurnId)
+  )
+    return false;
+  const kinds = record(item.internal_chat_message_metadata_passthrough)?.content_item_kinds;
+  if (
+    !Array.isArray(kinds) ||
+    kinds.length !== 1 ||
+    kinds[0] !== "skills.selected_skill_instructions"
+  )
+    return false;
+  const content = item.content;
+  if (!Array.isArray(content) || content.length !== 1 || record(content[0])?.type !== "input_text")
+    return false;
+  const text = rawMessageText(item).trim();
+  return /^<skill>\s*<name>[^<>\r\n]+<\/name>/.test(text) && text.endsWith("</skill>");
 }
 
 /** Native Page metadata is context, not a new human instruction or environment authority. */
@@ -187,7 +216,7 @@ function latestChatGptTurnUserRevision(
       messageTurnId !== expectedTurnId
     )
       continue;
-    if (contextualUserMessage(item)) continue;
+    if (contextualUserMessage(item, expectedTurnId)) continue;
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;
     return { content: item.content, ...(messageTurnId ? { turnId: messageTurnId } : {}) };
@@ -463,14 +492,21 @@ function hasAssistantOutputBetween(
 function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
+  const turnId = clientTurnMetadata(parsed)?.turn_id;
   let activeUserIndex = -1;
   for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (record(input[index])?.role === "user" && !isNativeOpenPageContext(record(input[index]))) {
+    if (
+      record(input[index])?.role === "user" &&
+      !isNativeOpenPageContext(record(input[index])) &&
+      !isNativeSelectedSkillContext(
+        record(input[index]),
+        typeof turnId === "string" ? turnId : undefined
+      )
+    ) {
       activeUserIndex = index;
       break;
     }
   }
-  const turnId = clientTurnMetadata(parsed)?.turn_id;
   const currentByTurn = environmentBeforeUser(
     input,
     activeUserIndex,
