@@ -44,6 +44,7 @@ export function estimateChatGptWebInputTokens(
     capabilities,
     mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
     {
+      experimentalSkillAttachments: capabilities.experimentalSkillAttachments,
       captureLunaCheckpoint:
         parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID &&
         !parsed._compactionRequest &&
@@ -68,6 +69,7 @@ export function resolveBiggerContextMultipartParts(
     );
   }
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  if (mode.effort === "low") return undefined;
 
   const onePartLimit = resolveChatGptWebContextLimits(
     CHATGPT_WEB_BACKEND_MODEL,

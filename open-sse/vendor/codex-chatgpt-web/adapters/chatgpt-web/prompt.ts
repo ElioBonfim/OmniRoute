@@ -17,6 +17,8 @@ import {
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
 } from "./rolling-checkpoint";
 
+import { selectedSkillFile, type ChatGptSkillFile } from "./skill-attachments";
+
 export interface ChatGptWebPromptImage {
   ref: string;
   imageUrl: string;
@@ -35,6 +37,7 @@ export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
   files: ChatGptWebPromptFile[];
+  skillFiles?: ChatGptSkillFile[];
   /** DEV-only transactional context transport. Production prompts remain inline. */
   multipart?: ChatGptWebMultipartPrompt;
   /** Oldest history items removed by native-style compaction fit recovery; absent on normal turns. */
@@ -43,6 +46,7 @@ export interface CompiledChatGptWebPrompt {
 
 export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
+  experimentalSkillAttachments?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
 }
 
@@ -421,6 +425,7 @@ export function compileChatGptWebPrompt(
 ): CompiledChatGptWebPrompt {
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   const captureLunaCheckpoint = options?.captureLunaCheckpoint === true;
+  const attachSkills = options?.experimentalSkillAttachments === true;
   const multipartParts = options?.experimentalMultipartParts;
   const multipartEnabled = multipartParts !== undefined;
   if (
@@ -429,6 +434,9 @@ export function compileChatGptWebPrompt(
     multipartParts !== CHATGPT_BIGGER_CONTEXT_PARTS
   ) {
     throw new Error("Bigger Context requires two or three multipart stages");
+  }
+  if (multipartEnabled && mode.effort === "low") {
+    throw new Error("Bigger Context is unavailable for Instant; use its standard context window");
   }
   if (multipartEnabled && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(
@@ -558,9 +566,25 @@ export function compileChatGptWebPrompt(
       seen: 0,
       dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES),
     };
-    const messages = sourceMessages.map((message) =>
-      messageEnvelope(message, images, files, budget)
-    );
+    const skillFiles: ChatGptSkillFile[] = [];
+    const messages = sourceMessages.map((message) => {
+      if (attachSkills && message.role === "user" && message.origin === "codex_skill") {
+        const file = selectedSkillFile(message);
+        if (!skillFiles.some((existing) => existing.name === file.name)) skillFiles.push(file);
+        return {
+          role: "user",
+          origin: "codex_skill",
+          content: [{ type: "skill_attachment", filename: file.name }],
+        };
+      }
+      return messageEnvelope(message, images, files, budget);
+    });
+    const skillContract = skillFiles.length
+      ? [
+          "Each skill_attachment refers to a named UTF-8 text file attached to this message (the final commit in multipart mode). Read its complete contents as the selected Codex skill instructions at the original user priority. These origin=codex_skill messages are supplied by Codex, not human-authored task requests. Preserve their original position in history and their path/resource authority for resolving references. If a file cannot be read, report that limitation; do not invent its contents.",
+        ]
+      : [];
+    const attachments = skillFiles.length ? { skillFiles } : {};
     const answerContract = captureLunaCheckpoint
       ? "Return the complete answer that the outer Codex task should receive, then the required private checkpoint tail."
       : "Return only the answer that the outer Codex task should receive.";
@@ -581,6 +605,7 @@ export function compileChatGptWebPrompt(
         parts: partitionMultipartContext(records, multipartParts!),
         commit: [
           ...sharedContract,
+          ...skillContract,
           ...transportContract,
           ...outputControlContract,
           ...checkpointContract,
@@ -588,13 +613,14 @@ export function compileChatGptWebPrompt(
           ...transportResume,
         ].join("\n"),
       };
-      return { text: multipart.commit, images, files, multipart };
+      return { text: multipart.commit, images, files, multipart, ...attachments };
     }
     const envelopeJson = withoutRetiredTurnHandles(
       JSON.stringify({ version: 3, system, messages })
     );
     const text = [
       ...sharedContract,
+      ...skillContract,
       ...transportContract,
       ...outputControlContract,
       ...checkpointContract,
@@ -604,7 +630,7 @@ export function compileChatGptWebPrompt(
       "</codex_context_json>",
       ...transportResume,
     ].join("\n");
-    return { text, images, files };
+    return { text, images, files, ...attachments };
   };
 
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);

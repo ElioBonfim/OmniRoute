@@ -565,7 +565,9 @@ export async function resolveChatGptToolConfirmation(
       '[role="dialog"], [data-testid="tool-approval-card"], [class~="@container/approval-card"]'
     )
     .filter({
-      hasText: new RegExp(`(?:Allow ChatGPT to use|Permitir que o ChatGPT use)\\s+${escapedAppName}\\?`),
+      hasText: new RegExp(
+        `(?:Allow ChatGPT to use|Permitir que o ChatGPT use)\\s+${escapedAppName}\\?`
+      ),
     })
     .last();
   if (!(await dialog.isVisible().catch(() => false))) return false;
@@ -1642,12 +1644,26 @@ export function chatGptImageFilePayloads(
   });
 }
 
+import { validateSkillFiles, skillFileTokens } from "./skill-attachments";
+
 export function chatGptPromptFilePayloads(
   prompt: CompiledChatGptWebPrompt
 ): Array<{ name: string; mimeType: string; buffer: Buffer }> {
+  validateSkillFiles(prompt.skillFiles);
+  if (
+    prompt.images.length + prompt.files.length + (prompt.skillFiles?.length ?? 0) >
+    CHATGPT_MAX_INPUT_IMAGES
+  ) {
+    throw new Error("ChatGPT web accepts at most 10 attachments per turn, including skills");
+  }
   const payloads = [
     ...chatGptImageFilePayloads(prompt.images),
     ...chatGptInputFilePayloads(prompt.files),
+    ...(prompt.skillFiles ?? []).map((file) => ({
+      name: file.name,
+      mimeType: "text/plain",
+      buffer: Buffer.from(file.text, "utf8"),
+    })),
   ];
   const totalBytes = payloads.reduce((total, payload) => total + payload.buffer.length, 0);
   if (totalBytes > CHATGPT_MAX_INPUT_ATTACHMENT_BYTES) {
@@ -4451,6 +4467,7 @@ export class ChatGptBrowserWorker {
     const prepare = reuseConversation ? turn.prepareResume : turn.prepare;
     if (!prepare) throw new Error("The retained ChatGPT conversation has no continuation prompt");
     const prepared = await prepare();
+    chatGptPromptFilePayloads(prepared);
     const diagnostics = new ChatGptBrowserDiagnostics(
       turn.traceId,
       this.config.browserDiagnosticsPath ?? join(getConfigDir(), "diagnostics", "browser-turns")
@@ -4524,7 +4541,9 @@ export class ChatGptBrowserWorker {
                 stagingEffort: stagingMode.effort,
                 maxStageMessageTokens,
                 maxStageChars,
-                finalMessageTokens: estimateTokens(multipartFinalPrompt, turn.modelId),
+                finalMessageTokens:
+                  estimateTokens(multipartFinalPrompt, turn.modelId) +
+                  skillFileTokens(prepared.skillFiles, turn.modelId),
                 finalMessageChars: multipartFinalPrompt.length,
               }
             : undefined
@@ -4617,7 +4636,7 @@ export class ChatGptBrowserWorker {
       };
       await diagnostics.capture(page, "browser-page-acquired");
       console.info(
-        `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${prepared.multipart ? `multipart-${prepared.multipart.parts.length}` : "inline"}, maxMessageChars=${maxMessageChars}, estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length}, compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`
+        `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${prepared.multipart ? `multipart-${prepared.multipart.parts.length}` : "inline"}, maxMessageChars=${maxMessageChars}, estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length}, skills=${prepared.skillFiles?.length ?? 0}, compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`
       );
       if (!reuseConversation) {
         await this.runStage(

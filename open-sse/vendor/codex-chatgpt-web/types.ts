@@ -39,6 +39,8 @@ export type CodexMessage =
   | CodexToolResultMessage;
 
 export interface CodexUserMessage {
+  /** Native selected-skill metadata, never inferred from envelope text. */
+  origin?: "codex_skill";
   role: "user";
   content: string | CodexContentPart[];
   timestamp: number;
@@ -317,5 +319,6 @@ export interface CodexProviderConfig {
     autoApproveToolCalls?: boolean;
     /** DEV-only experimental transport: adapt one context across one, two, or three ChatGPT messages. */
     experimentalBiggerContext?: boolean;
+    experimentalSkillAttachments?: boolean;
   };
 }

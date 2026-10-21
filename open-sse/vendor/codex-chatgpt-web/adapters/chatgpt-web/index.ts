@@ -334,7 +334,15 @@ export function createChatGptWebAdapter(
   if (experimentalBiggerContext !== undefined && typeof experimentalBiggerContext !== "boolean") {
     throw new Error("ChatGPT Bigger Context preference must be a boolean");
   }
+  const experimentalSkillAttachments = provider.chatgptWeb?.experimentalSkillAttachments;
+  if (
+    experimentalSkillAttachments !== undefined &&
+    typeof experimentalSkillAttachments !== "boolean"
+  ) {
+    throw new Error("ChatGPT Skills as files preference must be a boolean");
+  }
   const configuredCapabilities: ChatGptWebCapabilities = {
+    experimentalSkillAttachments: experimentalSkillAttachments === true,
     localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
     solAvailable: provider.chatgptWeb?.solAvailable !== false,
     proAvailable: provider.chatgptWeb?.proAvailable === true,
@@ -406,6 +414,7 @@ export function createChatGptWebAdapter(
         : undefined;
       return {
         captureLunaCheckpoint,
+        experimentalSkillAttachments,
         ...(experimentalMultipartParts !== undefined ? { experimentalMultipartParts } : {}),
       };
     };

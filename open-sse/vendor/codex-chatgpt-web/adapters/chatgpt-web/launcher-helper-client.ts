@@ -443,6 +443,12 @@ export class LauncherBrowserHelperClient {
               prepared.release();
               return;
             }
+            if (prepared.skillFiles?.length) {
+              prepared.release();
+              throw new Error(
+                "Skills as files requires the OmniRoute managed browser, not the legacy launcher"
+              );
+            }
             pending.prepared = prepared;
             return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused)).then(() => {
               if (this.pending.get(message.id) !== pending) return;

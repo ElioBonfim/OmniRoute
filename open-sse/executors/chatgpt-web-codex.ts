@@ -231,6 +231,7 @@ function buildProviderConfig(
       solAvailable,
       proAvailable,
       experimentalBiggerContext: data.experimentalBiggerContext === true,
+      experimentalSkillAttachments: data.experimentalSkillAttachments === true,
       autoApproveToolCalls: hasTools,
     },
   };

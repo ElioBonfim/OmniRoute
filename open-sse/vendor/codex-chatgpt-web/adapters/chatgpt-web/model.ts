@@ -8,6 +8,7 @@ export const CHATGPT_WEB_MODEL_ID = CHATGPT_WEB_BACKEND_MODEL;
 export const CHATGPT_WEB_LUNA_MODEL_ID = CHATGPT_WEB_LUNA_BACKEND_MODEL;
 
 export interface ChatGptWebCapabilities {
+  experimentalSkillAttachments?: boolean;
   localToolsEnabled: boolean;
   solAvailable: boolean;
   proAvailable: boolean;

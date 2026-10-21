@@ -7,6 +7,8 @@ import {
   type CompiledChatGptWebPrompt,
 } from "./prompt";
 
+import { skillFileTokens } from "./skill-attachments";
+
 // ChatGPT's product system prompt and the fixed Codex Native MCP schemas are not present in the
 // visible composer text. Reserve them explicitly; over-counting fails safe by compacting earlier.
 const CHATGPT_IMAGE_RESERVE_TOKENS = 4_096;
@@ -49,7 +51,11 @@ export function estimateCompiledChatGptWebMessageTokens(
   modelId: string
 ): number {
   return Math.max(
-    ...compiledChatGptWebMessages(compiled).map((message) => estimateTokens(message, modelId))
+    ...compiledChatGptWebMessages(compiled).map(
+      (message, index, messages) =>
+        estimateTokens(message, modelId) +
+        (index === messages.length - 1 ? skillFileTokens(compiled.skillFiles, modelId) : 0)
+    )
   );
 }
 
@@ -87,5 +93,11 @@ export function estimateCompiledChatGptWebInputTokens(
           0
         )
     : 0;
-  return CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + messageTokens + acknowledgementTokens + imageTokens;
+  return (
+    CHATGPT_WEB_PLATFORM_RESERVE_TOKENS +
+    messageTokens +
+    acknowledgementTokens +
+    imageTokens +
+    skillFileTokens(compiled.skillFiles, modelId)
+  );
 }
