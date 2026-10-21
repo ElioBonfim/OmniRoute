@@ -1,3 +1,4 @@
+import { recordFinishedOwnedConversation } from "./owned-conversations";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import { assertChatGptModelFamily, selectChatGptModelFamily } from "./model-selection";
 import {
@@ -5137,6 +5138,17 @@ export class ChatGptBrowserWorker {
               title: turn.conversationTitle,
             })
           );
+          try {
+            recordFinishedOwnedConversation(this.config.storageStatePath, {
+              id: ownedConversationId,
+              title: turn.conversationTitle,
+              traceId: turn.traceId,
+            });
+          } catch (registrationError) {
+            console.error(
+              `[chatgpt-web] cleanup ownership registration failed for ${turn.traceId}: ${registrationError instanceof Error ? registrationError.message : String(registrationError)}`
+            );
+          }
           await diagnostics.capture(diagnosticPage, "conversation-titled");
         } catch (titleError) {
           console.warn(
