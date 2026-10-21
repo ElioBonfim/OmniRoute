@@ -9,7 +9,9 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { chromium, type BrowserContextOptions, type Page } from "playwright-core";
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright-core";
+import { loadPlaywrightCore } from "../../utils/optionalPlaywrightCore.ts";
+import { cdpConnectOptions } from "./cdp-auth";
 import type { AppConfig } from "./config";
 import { atomicWriteFile } from "./config";
 import {
@@ -45,6 +47,27 @@ interface LoginVerificationMarker {
   cookieFingerprint?: string;
   storageStateFingerprint?: string;
   pendingBrowserVerification?: boolean;
+}
+
+/**
+ * CDP is explicitly used to attach to an already-running persistent Chrome profile.
+ * Creating a new incognito context after attaching discards that profile's cookies,
+ * local storage, cache, and Cloudflare browser trust — exactly the state CDP is meant
+ * to preserve for this provider.
+ */
+export async function browserContextForStoredState(
+  browser: Browser,
+  storageState: NonNullable<BrowserContextOptions["storageState"]>,
+  reusePersistentCdpContext: boolean
+): Promise<{ context: BrowserContext; owned: boolean }> {
+  if (!reusePersistentCdpContext) {
+    return { context: await browser.newContext({ storageState }), owned: true };
+  }
+  const context = browser.contexts()[0];
+  if (!context) {
+    throw new Error("The CDP Chrome instance did not expose its persistent browser context");
+  }
+  return { context, owned: false };
 }
 
 export function loginVerificationMarkerPath(storageStatePath: string): string {
@@ -89,8 +112,9 @@ async function inspectStoredState(
   if (!config.cdpEndpoint && !config.chromeExecutablePath) {
     throw new Error("ChatGPT browser verification requires Chrome or a CDP endpoint");
   }
+  const { chromium } = await loadPlaywrightCore();
   const verifierBrowser = config.cdpEndpoint
-    ? await chromium.connectOverCDP(config.cdpEndpoint)
+    ? await chromium.connectOverCDP(config.cdpEndpoint, cdpConnectOptions())
     : await chromium.launch({
         executablePath: config.chromeExecutablePath,
         headless: !config.headed,
@@ -99,7 +123,13 @@ async function inspectStoredState(
       });
   try {
     const persistent = usePersistentCdpProfile(config.cdpEndpoint);
-    const verifierContext = await openChatGptContext(verifierBrowser, storageState, persistent);
+    const { context: verifierContext, owned: ownsVerifierContext } = persistent
+      ? { context: await openChatGptContext(verifierBrowser, storageState, true), owned: false }
+      : await browserContextForStoredState(
+          verifierBrowser,
+          storageState,
+          Boolean(config.cdpEndpoint)
+        );
     let verifierPage: Page | undefined;
     try {
       verifierPage = await openChatGptPage(verifierContext, persistent);
@@ -121,7 +151,8 @@ async function inspectStoredState(
       return { ...(await detectChatGptAccountCapabilities(verifierPage)), url: verifierPage.url() };
     } finally {
       if (persistent && verifierPage) releasePersistentChatGptPage(verifierPage);
-      else if (!persistent) await verifierContext.close();
+      else if (ownsVerifierContext) await verifierContext.close();
+      else await verifierPage?.close().catch(() => {});
     }
   } finally {
     await verifierBrowser.close();
@@ -168,6 +199,7 @@ export async function loginToChatGpt(
       `Google Chrome was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`
     );
   }
+  const { chromium } = await loadPlaywrightCore();
   const profileDir = join(dirname(config.storageStatePath), "login-profile");
   mkdirSync(profileDir, { recursive: true, mode: 0o700 });
   process.stdout.write(
@@ -254,6 +286,7 @@ export function browserLoginStateExists(
 export async function checkBrowserEngine(config: AppConfig): Promise<void> {
   if (!existsSync(config.chromeExecutablePath))
     throw new Error(`Google Chrome was not found at ${config.chromeExecutablePath}`);
+  const { chromium } = await loadPlaywrightCore();
   const browser = await chromium.launch({
     executablePath: config.chromeExecutablePath,
     headless: true,

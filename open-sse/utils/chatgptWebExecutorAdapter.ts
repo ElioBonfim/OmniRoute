@@ -131,12 +131,16 @@ export function normalizeChatGptWebStorageState(value: unknown): ChatGptWebStora
   }
   for (const cookie of value.cookies) validateCookie(cookie);
   for (const origin of value.origins) validateOrigin(origin);
-  const normalized = structuredClone(value) as unknown as ChatGptWebStorageState;
-  // __Host- cookies must be host-only; a leading domain dot is rejected by Chromium.
-  for (const cookie of normalized.cookies) {
-    if (cookie.name.startsWith("__Host-")) cookie.domain = cookie.domain.replace(/^\./, "");
+  const state = structuredClone(value) as unknown as ChatGptWebStorageState;
+  // `__Host-` cookies must be host-only: no Domain attribute, Path=/, Secure.
+  // Browsers reject them when injected with a leading-dot domain (#15500).
+  for (const cookie of state.cookies) {
+    if (!cookie.name.startsWith("__Host-")) continue;
+    cookie.domain = cookie.domain.replace(/^\./, "");
+    cookie.path = "/";
+    cookie.secure = true;
   }
-  return normalized;
+  return state;
 }
 
 export function chatGptWebStorageStateFromCookieHeader(raw: string): ChatGptWebStorageState {
