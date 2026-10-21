@@ -80,6 +80,11 @@ async function openDeleteDialog(page: Page, record: OwnedConversation): Promise<
     timeout: 60000,
   });
   await page.locator('[contenteditable="true"]').first().waitFor({ timeout: 30000 });
+  await page.waitForFunction(
+    (title) => document.title === title || document.title === title + " - ChatGPT",
+    record.title,
+    { timeout: 10000 }
+  );
   await assertTarget(page, record);
   const more = page.getByRole("button", { name: /^(More|Mais)$/ }).filter({ visible: true });
   if ((await more.count()) !== 1) throw new Error("Expected one conversation menu");
@@ -90,6 +95,13 @@ async function openDeleteDialog(page: Page, record: OwnedConversation): Promise<
   if (!(await dialog.innerText()).includes(record.title)) {
     await dialog.getByRole("button", { name: /^(Cancel|Cancelar)$/ }).click();
     throw new Error("Delete dialog did not identify the owned conversation");
+  }
+  if (
+    (await dialog
+      .getByRole("button", { name: /^(Delete(?: chat)?|Excluir(?: chat)?)$/ })
+      .count()) !== 1
+  ) {
+    throw new Error("Expected one delete confirmation button");
   }
   await assertTarget(page, record);
 }
@@ -125,6 +137,10 @@ async function run(): Promise<void> {
   const apply = process.argv.includes("--apply"),
     verify = process.argv.includes("--verify-ui");
   if (apply && verify) throw new Error("UI verification cannot delete conversations");
+  const verifyIdArg = process.argv.indexOf("--verify-id");
+  const verifyId = verifyIdArg >= 0 ? process.argv[verifyIdArg + 1] : undefined;
+  if (verifyIdArg >= 0 && (!verify || !verifyId))
+    throw new Error("--verify-id requires --verify-ui and a registered ID");
   mkdirSync(dirname(config.auditPath), { recursive: true, mode: 0o700 });
   const lock = join(dirname(config.auditPath), "cleanup.lock");
   if (existsSync(lock)) {
@@ -200,7 +216,11 @@ async function run(): Promise<void> {
       await page.goto("https://chatgpt.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.locator('[contenteditable="true"]').first().waitFor({ timeout: 30000 });
       await assertAccount(page, config);
-      const targets = verify ? records.filter((r) => r.status === "finished").slice(-1) : eligible;
+      const targets = verify
+        ? records
+            .filter((r) => r.status === "finished" && (!verifyId || r.id === verifyId))
+            .slice(-1)
+        : eligible;
       if (verify && !targets.length)
         throw new Error("No registered conversation available for UI verification");
       for (const record of targets) {
