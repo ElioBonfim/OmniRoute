@@ -11,12 +11,140 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 const { compressContext, estimateTokens, getTokenLimit } =
   await import("../../open-sse/services/contextManager.ts");
 const core = await import("../../src/lib/db/core.ts");
+const { prepareLargeContext } =
+  await import("../../open-sse/handlers/chatCore/largeContextPreflight.ts");
 
 test.after(() => {
   core.resetDbInstance();
   if (ORIGINAL_DATA_DIR === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = ORIGINAL_DATA_DIR;
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
+test("compressContext: oversized two-message context fits without discarding instructions or task endpoints", () => {
+  const task = "BEGIN_TASK\n" + "historical output\n".repeat(400_000) + "\nFINAL_TASK";
+  const body = {
+    messages: [
+      { role: "system", content: "Always preserve this instruction." },
+      { role: "user", content: task },
+    ],
+  };
+  const started = performance.now();
+  const result = compressContext(body, { maxTokens: 80_000, reserveTokens: 0 });
+  assert.ok(estimateTokens(result.body.messages) <= 80_000);
+  assert.ok(result.compressed);
+  assert.equal(result.body.messages[0].content, body.messages[0].content);
+  const text = String(result.body.messages[1].content);
+  assert.ok(text.startsWith("BEGIN_TASK"));
+  assert.ok(text.endsWith("FINAL_TASK"));
+  assert.match(text, /context compacted/i);
+  assert.equal(body.messages[1].content, task);
+  assert.ok(
+    performance.now() - started < 3_000,
+    "multi-megabyte context must compact in bounded time"
+  );
+});
+
+test("compressContext: compacts text blocks while preserving media and tool argument JSON", () => {
+  const image = { type: "image_url", image_url: { url: "https://example.com/image.png" } };
+  const call = {
+    id: "tool-1",
+    type: "function",
+    function: { name: "read", arguments: JSON.stringify({ key: "x".repeat(1000) }) },
+  };
+  const body = {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "start " + 'á😀\\"\n'.repeat(80_000) + " end" }, image],
+        tool_calls: [call],
+      },
+      { role: "tool", tool_call_id: "tool-1", content: "done" },
+    ],
+  };
+  const result = compressContext(body, { maxTokens: 4_000, reserveTokens: 0 });
+  assert.ok(estimateTokens(result.body.messages) <= 4_000);
+  const assistant = result.body.messages.find((message) => message.role === "assistant");
+  assert.deepEqual(assistant.content[1], image);
+  assert.deepEqual(assistant.tool_calls, [call]);
+});
+
+test("compressContext: cannot fit immutable instructions and does not report fictitious savings", () => {
+  const body = {
+    messages: [
+      { role: "developer", content: "instruction ".repeat(10_000) },
+      { role: "user", content: "go" },
+    ],
+  };
+  const result = compressContext(body, { maxTokens: 100, reserveTokens: 0 });
+  assert.equal(result.body.messages[0].content, body.messages[0].content);
+  assert.ok(estimateTokens(result.body.messages) > 100);
+  assert.equal(result.compressed, false);
+});
+
+test("large-context preflight: fits packed history before optional engines and reserves tool schemas", () => {
+  const body = {
+    messages: [
+      { role: "system", content: "preserve" },
+      { role: "user", content: "BEGIN " + "log output\n".repeat(620_000) + " FINAL_TASK" },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "read",
+          parameters: { type: "object", description: "schema ".repeat(2000) },
+        },
+      },
+    ],
+  };
+  const result = prepareLargeContext(body, {
+    ceiling: 872_000,
+    allowCompaction: true,
+    provider: "codex",
+    model: "gpt-5.6-sol-high",
+  });
+  assert.equal(result.skipOptionalCompression, true);
+  assert.ok(result.finalTokens < 872_000);
+  assert.ok(result.finalTokens < result.originalTokens);
+  assert.deepEqual(result.body.tools, body.tools);
+});
+
+test("large-context preflight: honors compression opt-out and preserves normal requests", () => {
+  for (const size of [100, 600_000]) {
+    const body = { messages: [{ role: "user", content: "a".repeat(size) }] };
+    const result = prepareLargeContext(body, {
+      ceiling: 1000,
+      allowCompaction: false,
+      provider: "codex",
+      model: "gpt-5.6-sol-high",
+    });
+    assert.equal(result.body, body);
+    assert.equal(result.skipOptionalCompression, size > 512_000);
+  }
+});
+
+test("large-context preflight: Responses input restores compacted text and top-level instructions", () => {
+  const body = {
+    instructions: "Keep this instruction",
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "history ".repeat(100_000) + " FINAL_TASK" }],
+      },
+    ],
+  };
+  const result = prepareLargeContext(body, {
+    ceiling: 8000,
+    allowCompaction: true,
+    provider: "openai",
+    model: "gpt-5",
+  });
+  assert.equal(result.skipOptionalCompression, true);
+  assert.ok(result.finalTokens < 8000);
+  assert.equal(result.body.instructions, body.instructions);
+  assert.ok(Array.isArray(result.body.input));
+  assert.match(JSON.stringify(result.body.input), /FINAL_TASK/);
 });
 
 // ─── estimateTokens ─────────────────────────────────────────────────────────
@@ -139,9 +267,11 @@ test("compressContext: Layer 1 — trims long tool messages", () => {
   // Use target limit that allows the truncated tool message (~1000 tokens) to survive
   const result = compressContext(body, { maxTokens: 2000, reserveTokens: 100 });
   assert.ok(result.compressed);
-  const toolMsg = (result.body.messages as any).find((m: any) => m.role === "tool");
-  assert.ok(toolMsg.content.length < longContent.length);
-  assert.ok(toolMsg.content.includes("[truncated]"));
+  const toolMsg = (result.body.messages as Record<string, unknown>[]).find(
+    (m) => m.role === "tool"
+  );
+  assert.ok(String(toolMsg.content).length < longContent.length);
+  assert.ok(String(toolMsg.content).includes("[truncated]"));
 });
 
 test("compressContext: Layer 2 — compresses thinking in old messages", () => {
@@ -168,9 +298,13 @@ test("compressContext: Layer 2 — compresses thinking in old messages", () => {
   };
   const result = compressContext(body, { maxTokens: 2000, reserveTokens: 500 });
   // First assistant should have thinking removed
-  const firstAssistant = (result.body as any).messages.find((m: any) => m.role === "assistant");
+  const firstAssistant = (result.body.messages as Record<string, unknown>[]).find(
+    (m) => m.role === "assistant"
+  );
   if (Array.isArray(firstAssistant.content)) {
-    const hasThinking = firstAssistant.content.some((b: any) => b.type === "thinking");
+    const hasThinking = firstAssistant.content.some(
+      (b: Record<string, unknown>) => b.type === "thinking"
+    );
     assert.equal(hasThinking, false);
   }
 });
@@ -197,8 +331,8 @@ test("compressContext: Layer 2 preserves prompt-format thinking tags in string c
     ],
   };
   const result = compressContext(body, { maxTokens: 2000, reserveTokens: 500 });
-  const firstAssistant = (result.body as any).messages.find(
-    (m: any) => m.role === "assistant" && typeof m.content === "string"
+  const firstAssistant = (result.body.messages as Record<string, unknown>[]).find(
+    (m: Record<string, unknown>) => m.role === "assistant" && typeof m.content === "string"
   );
 
   assert.equal(
@@ -218,7 +352,7 @@ test("compressContext: Layer 3 — drops old messages to fit", () => {
   const body = { model: "test", messages };
   const result = compressContext(body, { maxTokens: 3000, reserveTokens: 500 });
   assert.ok(result.compressed);
-  assert.ok((result as any).body.messages.length < messages.length);
+  assert.ok((result.body.messages as unknown[]).length < messages.length);
   assert.equal(result.body.messages[0].role, "system");
 });
 
@@ -332,8 +466,8 @@ test("Layer 3: preserves intact tool_use/tool_result pairs after compression", (
   ];
   const body = { model: "test", messages };
   const result = compressContext(body, { maxTokens: 50000, reserveTokens: 10000 });
-  const toolMsg = (result.body.messages as any).find(
-    (m: any) => m.role === "tool" && m.tool_call_id === "call_1"
+  const toolMsg = (result.body.messages as Record<string, unknown>[]).find(
+    (m: Record<string, unknown>) => m.role === "tool" && m.tool_call_id === "call_1"
   );
   assert.ok(toolMsg, "tool_result for call_1 should survive compression");
 });

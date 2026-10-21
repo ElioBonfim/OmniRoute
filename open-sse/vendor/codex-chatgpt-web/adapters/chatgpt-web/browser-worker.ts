@@ -1146,6 +1146,11 @@ export async function setChatGptThinkMode(
   await captureDiagnostic?.(enabled ? "think-enabled" : "think-disabled");
 }
 
+export function chatGptTurnIdentitySelector(identity: string): string {
+  const encoded = JSON.stringify(identity);
+  return `[data-testid=${encoded}], [data-chatgpt-search-unit-key=${encoded}]`;
+}
+
 export function chatGptNewTurnIdentity(
   initial: readonly string[],
   current: readonly string[]

@@ -79,7 +79,7 @@ test("resolveWorkerFile returns an existing onnxWorker file (no import.meta.url)
 });
 
 test("resolveWorkerFile chooses TS over a tracked JS placeholder in the source tree", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "slm-placeholder-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "slm-placeholder-")));
   const originalCwd = process.cwd();
   const originalArgv1 = process.argv[1];
   try {

@@ -642,11 +642,74 @@ export function compressContext(
   currentTokens = estimateTokens(messages); // #8594: object-path keeps the #8368 image estimate
   stats.layers.push({ name: "purify_history", tokens: currentTokens });
 
+  // A client can pack its entire transcript into one message. Dropping older
+  // turns cannot shrink that shape. Preserve instructions and structured data,
+  // and elide only the middle of oversized conversational text as a last resort.
+  if (currentTokens > targetTokens) {
+    messages = compactOversizedMessageText(messages, targetTokens);
+    currentTokens = estimateTokens(messages);
+    stats.layers.push({ name: "compact_message_text", tokens: currentTokens });
+  }
+
   return {
     body: { ...body, messages },
-    compressed: true,
+    compressed: currentTokens < stats.original,
     stats: { ...stats, final: currentTokens },
   };
+}
+
+const TEXT_COMPACTION_NOTICE =
+  "\n[Context compacted: oversized message middle omitted; beginning and latest text retained.]\n";
+
+function mapConversationalText(
+  messages: Record<string, unknown>[],
+  transform: (text: string) => string
+): Record<string, unknown>[] {
+  return messages.map((message) => {
+    if (message.role !== "user" && message.role !== "assistant") return message;
+    if (typeof message.content === "string")
+      return { ...message, content: transform(message.content) };
+    if (!Array.isArray(message.content)) return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (!part || typeof part !== "object") return part;
+        if (!["text", "input_text", "output_text"].includes(part.type)) return part;
+        return typeof part.text === "string" ? { ...part, text: transform(part.text) } : part;
+      }),
+    };
+  });
+}
+
+function compactOversizedMessageText(
+  messages: Record<string, unknown>[],
+  targetTokens: number
+): Record<string, unknown>[] {
+  const originalTokens = estimateTokens(messages);
+  const fixedTokens = estimateTokens(mapConversationalText(messages, () => ""));
+  // Never rewrite system/developer instructions, media, or tool-call arguments
+  // to force a fit. The caller's budget gate rejects an impossible request.
+  if (fixedTokens >= targetTokens) return messages;
+  let ratio = Math.min(1, ((targetTokens - fixedTokens) / (originalTokens - fixedTokens)) * 0.9);
+  let result = messages;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    result = mapConversationalText(messages, (text) => {
+      const keep = Math.floor(text.length * ratio);
+      // Small task text should not be replaced with a longer omission marker.
+      if (keep >= text.length || text.length < 256) return text;
+      const contentBudget = Math.max(0, keep - TEXT_COMPACTION_NOTICE.length);
+      let head = Math.floor(contentBudget / 4);
+      let tailStart = text.length - (contentBudget - head);
+      // Avoid splitting a UTF-16 surrogate pair at either boundary.
+      if (head > 0 && /[\uD800-\uDBFF]/.test(text[head - 1])) head--;
+      if (tailStart < text.length && /[\uDC00-\uDFFF]/.test(text[tailStart])) tailStart++;
+      return text.slice(0, head) + TEXT_COMPACTION_NOTICE + text.slice(tailStart);
+    });
+    const tokens = estimateTokens(result);
+    if (tokens <= targetTokens) break;
+    ratio *= Math.max(0, (targetTokens - fixedTokens) / (tokens - fixedTokens)) * 0.9;
+  }
+  return result;
 }
 
 // ─── Layer 1: Trim Tool Messages ────────────────────────────────────────────

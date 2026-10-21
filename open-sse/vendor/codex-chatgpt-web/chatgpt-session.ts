@@ -26,7 +26,7 @@ export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
 export const CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR =
   "[data-model-reasoning-effort-slider], [data-model-picker-power-slider]";
 export const CHATGPT_EFFORT_SLIDER_SELECTOR =
-  '[data-model-reasoning-effort-slider] [role="slider"], [data-model-picker-power-slider] [role="slider"]';
+  '[data-model-reasoning-effort-slider] [role="slider"], [data-model-picker-power-slider] [role="slider"], [role="menuitem"][data-reasoning-slider="true"]';
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 const CHATGPT_STOP_ICON_PATH =
   "M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z";

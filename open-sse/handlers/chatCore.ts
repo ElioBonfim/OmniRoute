@@ -1,3 +1,4 @@
+import { prepareLargeContext } from "./chatCore/largeContextPreflight.ts";
 import { finalizeTranslatedRequest } from "./chatCore/translatedRequestFinalize.ts";
 import {
   injectMemoryAndSkills,
@@ -1263,8 +1264,80 @@ async function handleChatCoreInner({
       );
     }
 
+    if (isCombo && comboName) {
+      log?.info?.("CONTEXT", `Attempting to resolve combo limits for comboName=${comboName}`);
+      try {
+        const { getComboByName } = await import("@/lib/db/combos");
+        const { resolveComboTargets } = await import("../services/combo.ts");
+        let comboConfig = await getComboByName(comboName);
+        if (!comboConfig && comboName.startsWith("combo/")) {
+          comboConfig = await getComboByName(comboName.substring(6));
+        }
+        let comboTargetLimits: number[] = [];
+        if (comboConfig) {
+          const allCombosData = await getCombosCached();
+          const targets = resolveComboTargets(
+            comboConfig as unknown as { name: string; models: unknown[] },
+            allCombosData as unknown as { name: string; models: unknown[] }[]
+          );
+          // Fall back to ResolvedComboTarget.provider when modelStr lacks a
+          // provider/ prefix — parseModel alone returns provider:null (#8716).
+          comboTargetLimits = targets
+            .map((t: { modelStr?: string; provider?: string }) =>
+              getComboTargetTokenLimit({ modelStr: t.modelStr, provider: t.provider })
+            )
+            .filter(
+              (limit): limit is number =>
+                typeof limit === "number" && Number.isFinite(limit) && limit > 0
+            );
+        }
+        // chatCore executes per concrete target (handleSingleModel resolves
+        // provider/effectiveModel before delegating). Compress against THIS
+        // target's window; min(...allTargets) is only a defensive fallback —
+        // the old unconditional min compressed a 1M-target request at the
+        // smallest sibling's window ("agent keeps forgetting things").
+        // An explicit `context_length` on the combo record (Agent Features →
+        // Context length) is an operator declaration and outranks the inferred
+        // per-target window — see resolveComboContextLimit().
+        const rawComboContextLength = (comboConfig as { context_length?: unknown } | null)
+          ?.context_length;
+        const comboContextLength =
+          typeof rawComboContextLength === "number" &&
+          Number.isFinite(rawComboContextLength) &&
+          rawComboContextLength > 0
+            ? rawComboContextLength
+            : null;
+        const resolved = resolveComboContextLimit({
+          provider,
+          model: effectiveModel,
+          comboTargetLimits,
+          comboContextLength,
+        });
+        contextLimit = resolved.limit;
+        log?.info?.(
+          "CONTEXT",
+          `Combo context limit: ${resolved.limit} (source=${resolved.source})`
+        );
+      } catch (err) {
+        log?.warn?.("CONTEXT", "Failed to resolve combo limits for compression: " + err);
+      }
+    }
+
+    const largeContext = prepareLargeContext(body as Record<string, unknown>, {
+      ceiling: getEffectiveCompactionCeiling(contextLimit),
+      allowCompaction: reactiveContextCompactionEnabled && !skipNativeCodexReactiveCompaction,
+      provider,
+      model: effectiveModel,
+    });
+    body = largeContext.body as typeof body;
+    estimatedTokens = estimateTokens(adaptBodyForCompression(body as Record<string, unknown>).body.messages);
+    if (largeContext.skipOptionalCompression) {
+      log?.info?.("CONTEXT", `Large-context preflight: ${largeContext.originalTokens} → ${largeContext.finalTokens} input tokens; optional compression engines bypassed`);
+    }
+
     // --- Modular Compression Pipeline (Phase 1 Lite + Phase 2 Standard/Caveman + Phase 3 Aggressive) ---
     // Runs BEFORE the existing reactive compressContext() to proactively reduce tokens.
+    if (!largeContext.skipOptionalCompression) {
     try {
       const {
         selectCompressionStrategy,
@@ -1723,6 +1796,7 @@ async function handleChatCoreInner({
           (err instanceof Error ? err.message : String(err))
       );
     }
+    }
     // --- End Modular Compression Pipeline ---
 
     if (!promptCompressionEnabled) {
@@ -1733,65 +1807,6 @@ async function handleChatCoreInner({
           : "Prompt Compression engines disabled; reactive context compaction is ALSO disabled — large histories will NOT be trimmed before reaching the upstream provider"
       );
     }
-    if (isCombo && comboName) {
-      log?.info?.("CONTEXT", `Attempting to resolve combo limits for comboName=${comboName}`);
-      try {
-        const { getComboByName } = await import("@/lib/db/combos");
-        const { resolveComboTargets } = await import("../services/combo.ts");
-        let comboConfig = await getComboByName(comboName);
-        if (!comboConfig && comboName.startsWith("combo/")) {
-          comboConfig = await getComboByName(comboName.substring(6));
-        }
-        let comboTargetLimits: number[] = [];
-        if (comboConfig) {
-          const allCombosData = await getCombosCached();
-          const targets = resolveComboTargets(
-            comboConfig as unknown as { name: string; models: unknown[] },
-            allCombosData as unknown as { name: string; models: unknown[] }[]
-          );
-          // Fall back to ResolvedComboTarget.provider when modelStr lacks a
-          // provider/ prefix — parseModel alone returns provider:null (#8716).
-          comboTargetLimits = targets
-            .map((t: { modelStr?: string; provider?: string }) =>
-              getComboTargetTokenLimit({ modelStr: t.modelStr, provider: t.provider })
-            )
-            .filter(
-              (limit): limit is number =>
-                typeof limit === "number" && Number.isFinite(limit) && limit > 0
-            );
-        }
-        // chatCore executes per concrete target (handleSingleModel resolves
-        // provider/effectiveModel before delegating). Compress against THIS
-        // target's window; min(...allTargets) is only a defensive fallback —
-        // the old unconditional min compressed a 1M-target request at the
-        // smallest sibling's window ("agent keeps forgetting things").
-        // An explicit `context_length` on the combo record (Agent Features →
-        // Context length) is an operator declaration and outranks the inferred
-        // per-target window — see resolveComboContextLimit().
-        const rawComboContextLength = (comboConfig as { context_length?: unknown } | null)
-          ?.context_length;
-        const comboContextLength =
-          typeof rawComboContextLength === "number" &&
-          Number.isFinite(rawComboContextLength) &&
-          rawComboContextLength > 0
-            ? rawComboContextLength
-            : null;
-        const resolved = resolveComboContextLimit({
-          provider,
-          model: effectiveModel,
-          comboTargetLimits,
-          comboContextLength,
-        });
-        contextLimit = resolved.limit;
-        log?.info?.(
-          "CONTEXT",
-          `Combo context limit: ${resolved.limit} (source=${resolved.source})`
-        );
-      } catch (err) {
-        log?.warn?.("CONTEXT", "Failed to resolve combo limits for compression: " + err);
-      }
-    }
-
     const effectiveCompactionCeiling = getEffectiveCompactionCeiling(contextLimit);
     const COMPRESSION_THRESHOLD = (
       await import("@/lib/db/compression")

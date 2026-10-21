@@ -161,7 +161,12 @@ export async function refreshAndUpdateCredentialsWithResolver(
 
   if (connection.provider === "claude") {
     const saved = await getProviderConnectionById(connection.id);
-    return { connection: saved || connection, refreshed: !!refreshResult.accessToken };
+    return {
+      connection: saved
+        ? { ...connection, ...saved, id: connection.id, provider: connection.provider }
+        : connection,
+      refreshed: !!refreshResult.accessToken,
+    };
   }
 
   const updateData = buildCredentialUpdateData(connection, refreshResult);
