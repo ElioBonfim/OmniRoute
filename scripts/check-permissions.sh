@@ -30,6 +30,4 @@ if [ -d "$DATA_PATH" ] && [ ! -w "$DATA_PATH" ]; then
   fi
 fi
 
-node /app/import-on-start.mjs
-
 exec "$@"
