@@ -1,4 +1,5 @@
-import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/providers";
+import { updateProviderConnection } from "@/lib/db/providers";
+import * as passive from "@omniroute/open-sse/services/tokenRefresh/passiveCodex.ts";
 import type { BaseExecutor } from "@omniroute/open-sse/executors/base";
 import {
   isUnrecoverableRefreshError,
@@ -8,8 +9,6 @@ import {
   rotationGroupFor,
   serializeRefresh,
 } from "@omniroute/open-sse/services/refreshSerializer.ts";
-
-import { getAccessToken } from "@omniroute/open-sse/services/tokenRefresh.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -106,7 +105,7 @@ export async function refreshAndUpdateCredentialsWithResolver(
   connection: ProviderConnectionLike,
   resolveExecutor: CredentialExecutorResolver,
   opts: CredentialRefreshOptions = {}
-) {
+): Promise<{ connection: ProviderConnectionLike; refreshed: boolean; adopted?: boolean }> {
   if (!shouldAttemptRotatingRefresh(connection.provider, opts.allowRotatingRefresh)) {
     return { connection, refreshed: false };
   }
@@ -115,7 +114,7 @@ export async function refreshAndUpdateCredentialsWithResolver(
     connectionId: connection.id,
     accessToken: connection.accessToken,
     refreshToken: connection.refreshToken,
-    expiresAt: connection.expiresAt || connection.tokenExpiresAt || null,
+    expiresAt: connection.tokenExpiresAt || connection.expiresAt || null,
     providerSpecificData: connection.providerSpecificData,
     copilotToken: connection.providerSpecificData?.copilotToken,
     copilotTokenExpiresAt: connection.providerSpecificData?.copilotTokenExpiresAt,
@@ -125,25 +124,18 @@ export async function refreshAndUpdateCredentialsWithResolver(
     return { connection, refreshed: false };
   }
 
-  // Claude's centralized refresh already owns the group lane and per-account
-  // mutex. Nesting another group lane deadlocks; writing after it releases can
-  // restore an already-consumed refresh token.
-  const refreshResult = (
-    connection.provider === "claude"
-      ? await getAccessToken(connection.provider, credentials, console, null, async (tokens) => {
-          await updateProviderConnection(
-            connection.id,
-            buildCredentialUpdateData(connection, tokens)
-          );
-        })
-      : await serializeRefresh(connection.provider, () =>
-          executor.refreshCredentials(credentials, console)
-        )
-  ) as CredentialRefreshResult | null;
-
-  if (refreshResult?.error === "unrecoverable_refresh_error") {
-    throw withStatus(new Error("Refresh token rejected. Please re-authorize the connection."), 401);
+  if (passive.isPassiveCodex(connection.provider)) {
+    const adopted = await passive.adoptPassiveCodex(connection);
+    return {
+      connection: adopted,
+      refreshed: false,
+      adopted: adopted.accessToken !== connection.accessToken,
+    };
   }
+
+  const refreshResult = (await serializeRefresh(connection.provider, () =>
+    executor.refreshCredentials(credentials, console)
+  )) as CredentialRefreshResult | null;
 
   // A dead refresh token surfaces as an unrecoverable sentinel, not a falsy
   // result: without this guard the truthy sentinel would read as a success
@@ -157,16 +149,6 @@ export async function refreshAndUpdateCredentialsWithResolver(
       new Error("Failed to refresh credentials. Please re-authorize the connection."),
       401
     );
-  }
-
-  if (connection.provider === "claude") {
-    const saved = await getProviderConnectionById(connection.id);
-    return {
-      connection: saved
-        ? { ...connection, ...saved, id: connection.id, provider: connection.provider }
-        : connection,
-      refreshed: !!refreshResult.accessToken,
-    };
   }
 
   const updateData = buildCredentialUpdateData(connection, refreshResult);

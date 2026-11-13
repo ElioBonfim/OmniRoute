@@ -1,5 +1,6 @@
 import { setCredentialHealth } from "@/lib/credentialHealth/cache";
 import { recoverKeyHealth } from "@omniroute/open-sse/services/apiKeyRotator.ts";
+import { isPassiveCodex } from "@omniroute/open-sse/services/tokenRefresh.ts";
 import { applyDetectedControlUpdate, type ApiKeyValidationResult } from "./apiKeyTestResult";
 
 interface ConnectionHealthSnapshot {
@@ -54,18 +55,10 @@ export async function persistConnectionTestHealth({
   const terminalTestStatuses = new Set(["banned", "expired", "credits_exhausted"]);
   const isTerminalFailure =
     !result.valid &&
-    (terminalTestStatuses.has(String(diagnosis.code ?? "").toLowerCase()) ||
-      terminalTestStatuses.has(String(diagnosis.type ?? "").toLowerCase()));
+    terminalTestStatuses.has(String(diagnosis.code ?? diagnosis.type ?? "").toLowerCase());
   const updateData: Record<string, unknown> = {
-    testStatus: clearErrorState
-      ? "active"
-      : result.valid
-        ? latest.testStatus
-        : isTerminalFailure
-          ? diagnosis.type
-          : "error",
+    testStatus: clearErrorState ? "active" : result.valid ? connection.testStatus : "error",
     ...(result.valid && !operatorDisabled ? { isActive: true } : {}),
-    ...(!result.valid && isTerminalFailure ? { isActive: false } : {}),
     lastError: clearErrorState ? null : result.valid ? connection.lastError : result.error,
     lastErrorAt: clearErrorState ? null : result.valid ? connection.lastErrorAt : now,
     lastTested: now,
@@ -96,8 +89,14 @@ export async function persistConnectionTestHealth({
     if (recovered) updateData.providerSpecificData = recovered;
   }
   applyDetectedControlUpdate(updateData, latest.providerSpecificData, result);
-  // refreshOAuthToken persists rotating credentials while holding its mutex.
-  // Replaying the returned pair here can overwrite a newer concurrent refresh.
+  // A passive Codex standby only adopts tokens from the active instance; it must never persist
+  // tokens a connection test carries back, or it would overwrite the replicated credentials.
+  if (result.refreshed && result.newTokens && !isPassiveCodex(provider)) {
+    updateData.accessToken = result.newTokens.accessToken;
+    if (result.newTokens.refreshToken) updateData.refreshToken = result.newTokens.refreshToken;
+    if (result.newTokens.expiresIn)
+      updateData.expiresAt = new Date(Date.now() + result.newTokens.expiresIn * 1000).toISOString();
+  }
   const saved = await persist(connectionId, updateData);
   // A connection deleted mid-test (persist → null) keeps the release flow (no throw), but it
   // must not advertise recovered credentials.

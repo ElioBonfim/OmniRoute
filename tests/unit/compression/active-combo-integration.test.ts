@@ -37,7 +37,8 @@ test("an active named combo's pipeline is what selectCompressionPlan resolves, f
     combosDb.listCompressionCombos().map((c) => [c.id, c.pipeline])
   );
   const config = { ...DEFAULT_COMPRESSION_CONFIG, enabled: true, activeComboId: created.id };
-  // The explicit operator selection applies without per-client configuration.
+  // #14529: a lossy profile only runs when the request opts in; header-less requests still
+  // resolve the ACTIVE profile (source) but get its lossy steps swapped for the safe pair.
   const plan = selectCompressionPlan(
     config,
     null,
@@ -51,7 +52,10 @@ test("an active named combo's pipeline is what selectCompressionPlan resolves, f
   assert.deepEqual(plan.stackedPipeline, [{ engine: "rtk", intensity: "standard" }]);
   const headerless = selectCompressionPlan(config, null, 5000, undefined, undefined, combos);
   assert.equal(headerless.source, "active-profile");
-  assert.deepEqual(headerless.stackedPipeline, created.pipeline);
+  assert.deepEqual(headerless.stackedPipeline, [
+    { engine: "session-dedup" },
+    { engine: "lite", config: { compressToolResults: false, preserveToolWhitespace: true } },
+  ]);
 
   // Setting activeComboId did NOT change which combo is is_default (legacy untouched).
   const def = combosDb.getDefaultCompressionCombo();

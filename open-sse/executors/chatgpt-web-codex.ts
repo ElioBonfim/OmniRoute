@@ -7,11 +7,13 @@ import {
 
 import { isVerifiedNativeCodexRequest } from "../config/codexIdentity.ts";
 import { FORMATS } from "../translator/formats.ts";
-import { buildErrorBody, sanitizeErrorMessage } from "../utils/error.ts";
 import {
-  createChatGptWebAdapter,
-  chatGptWebExecutionNamespace,
-} from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/index.ts";
+  buildErrorBody,
+  errorResponse as canonicalErrorResponse,
+  sanitizeErrorMessage,
+} from "../utils/error.ts";
+import { drainAwareFailureStatus } from "../utils/drainStatus.ts";
+import { createChatGptWebAdapter } from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/index.ts";
 import { ChatGptBrowserWorker } from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/browser-worker.ts";
 import {
   browserLoginStateExists,
@@ -31,11 +33,7 @@ import type {
   CodexProviderConfig,
 } from "../vendor/codex-chatgpt-web/types.ts";
 import { BaseExecutor, type ExecuteInput, type ExecutorExecuteResult } from "./base.ts";
-import {
-  reasoningEffortOf,
-  requireChatGptWebCodexRoute,
-  type ChatGptWebCodexModelRoute,
-} from "./chatgpt-web-codex/models.ts";
+import { reasoningEffortOf, requireChatGptWebCodexRoute } from "./chatgpt-web-codex/models.ts";
 import {
   connectionRuntimePaths,
   ensureConnectionStorageStateFromCredential,
@@ -70,7 +68,7 @@ function errorResponse(status: number, message: unknown, code = "chatgpt_web_cod
 function wrapped(response: Response, body: unknown): ExecutorExecuteResult {
   return {
     response,
-    url: "https://chatgpt.com/",
+    url: "https://chatgpt.com/?temporary-chat=true",
     headers: {},
     transformedBody: body,
     transport: "chatgpt-web-browser",
@@ -104,9 +102,15 @@ function configuredString(data: Record<string, unknown>, ...keys: string[]): str
   return undefined;
 }
 
+/**
+ * The browser to launch. Only the operator chooses it: the server's own environment
+ * (CHATGPT_WEB_CODEX_CHROME_PATH, CHROME_PATH) or the known install locations. `explicit`
+ * comes from the connection's providerSpecificData — caller input on remote management
+ * requests, stored and read again by health checks and inference — so it may only pick
+ * one of those, never name another program on the host.
+ */
 export function detectChromeExecutable(explicit?: string): string | undefined {
-  const candidates = [
-    explicit,
+  const operatorChoices = [
     process.env.CHATGPT_WEB_CODEX_CHROME_PATH,
     process.env.CHROME_PATH,
     "/usr/bin/google-chrome",
@@ -114,10 +118,13 @@ export function detectChromeExecutable(explicit?: string): string | undefined {
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  ];
-  return candidates.find((candidate): candidate is string =>
-    Boolean(candidate && existsSync(candidate))
-  );
+  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
+  const preferred = explicit?.trim();
+  const candidates =
+    preferred && operatorChoices.includes(preferred)
+      ? [preferred, ...operatorChoices]
+      : operatorChoices;
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function responseStateNamespace(connectionId: string, parsed: CodexParsedRequest): string {
@@ -169,8 +176,7 @@ export function resolveChatGptWebCodexPreviousResponse(
 }
 
 function toolModeRequired(parsed: CodexParsedRequest): boolean {
-  // History compaction is a summary-only round, including inline additional_tools.
-  if (parsed._compactionRequest || parsed.options.toolChoice === "none") return false;
+  if (parsed.options.toolChoice === "none") return false;
   return (parsed.context.tools?.length ?? 0) > 0;
 }
 
@@ -178,10 +184,10 @@ function buildProviderConfig(
   input: ExecuteInput,
   parsed: CodexParsedRequest,
   storageStatePath: string,
-  connectionId: string,
-  route: ChatGptWebCodexModelRoute
+  connectionId: string
 ): CodexProviderConfig {
   const data = record(input.credentials.providerSpecificData);
+  const route = requireChatGptWebCodexRoute(input.model);
   const paths = connectionRuntimePaths(connectionId);
   const cdpEndpoint =
     configuredString(data, "browserCdpEndpoint") ?? process.env.CHATGPT_WEB_CODEX_CDP_URL;
@@ -212,8 +218,6 @@ function buildProviderConfig(
 
   parsed.modelId = route.backendModel;
   parsed.options.reasoning = route.effort;
-  if (route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
-  else delete parsed._chatgptModelFamily;
 
   return {
     adapter: "chatgpt-web",
@@ -222,8 +226,6 @@ function buildProviderConfig(
     models: [route.backendModel],
     chatgptWeb: {
       appName: connector,
-      useSavedChats: data.useSavedChats === true,
-      labelSavedConversations: data.labelSavedConversations === true,
       storageStatePath,
       ...(chromeExecutablePath ? { chromeExecutablePath } : {}),
       ...(cdpEndpoint ? { cdpEndpoint } : {}),
@@ -235,7 +237,6 @@ function buildProviderConfig(
       solAvailable,
       proAvailable,
       experimentalBiggerContext: data.experimentalBiggerContext === true,
-      experimentalSkillAttachments: data.experimentalSkillAttachments === true,
       autoApproveToolCalls: hasTools,
     },
   };
@@ -318,14 +319,14 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
       const parsed = parseRequest(expandedBody);
       responseStateNamespace(connectionId, parsed);
 
-      let route: ChatGptWebCodexModelRoute;
-      try {
-        route = requireChatGptWebCodexRoute(input.model, reasoningEffortOf(initialBody));
-      } catch (error) {
+      const route = requireChatGptWebCodexRoute(input.model);
+      const explicitEffort = reasoningEffortOf(initialBody);
+      const normalizedEffort = explicitEffort === "ultra" ? "max" : explicitEffort;
+      if (normalizedEffort && normalizedEffort !== route.effort) {
         return wrapped(
           errorResponse(
             400,
-            error instanceof Error ? error.message : "Invalid Web model or effort",
+            `Requested reasoning effort ${explicitEffort} is incompatible with model ${route.id}`,
             "incompatible_reasoning_effort"
           ),
           initialBody
@@ -397,22 +398,9 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
         },
         parsed,
         storageStatePath,
-        connectionId,
-        route
+        connectionId
       );
-      // Retire the original tool runtime before submitting a read-only summary.
-      // Keep its authority namespace distinct from the summary-only provider.
-      const compactionSourceNamespace = parsed._compactionRequest
-        ? chatGptWebExecutionNamespace({
-            ...provider,
-            chatgptWeb: {
-              ...provider.chatgptWeb,
-              localToolsEnabled: (parsed.context.tools?.length ?? 0) > 0,
-              autoApproveToolCalls: (parsed.context.tools?.length ?? 0) > 0,
-            },
-          })
-        : undefined;
-      const adapter = createChatGptWebAdapter(provider, { compactionSourceNamespace });
+      const adapter = createChatGptWebAdapter(provider);
       const worker = ChatGptBrowserWorker.forProvider(provider);
       trackChatGptWebCodexRuntime(worker, connectionRuntimePaths(connectionId).brokerSocketPath);
       const maps = toolMaps(parsed);
@@ -425,12 +413,14 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
         try {
           await adapter.runTurn(parsed, incoming, (event) => events.push(event));
         } catch (error) {
+          const message = sanitizeErrorMessage(error instanceof Error ? error.message : error);
+          const status = drainAwareFailureStatus(502);
           events.push({
             type: "error",
-            message: sanitizeErrorMessage(error instanceof Error ? error.message : error),
-            status: 502,
-            errorType: "provider_error",
-            code: "chatgpt_web_codex_turn_failed",
+            message,
+            status,
+            errorType: status === 499 ? "client_disconnected" : "provider_error",
+            code: status === 499 ? "client_disconnected" : "chatgpt_web_codex_turn_failed",
           });
         } finally {
           try {
@@ -457,6 +447,18 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
         const running = run();
         const collected = await events.collect();
         await running;
+        const drainFailure = collected.find(
+          (event) => event.type === "error" && event.status === 499
+        );
+        if (drainFailure?.type === "error") {
+          // Our own shutdown stopped the ChatGPT Web runtime under a request that
+          // was still in flight, so the turn was never really served. Answer 499
+          // (client_disconnected) with the canonical body of the repo's
+          // errorResponse helper, so the runtime does not read our own teardown as
+          // provider ill health. gracefulShutdown.cleanup() stops this runtime via
+          // stopChatGptWebCodexRuntime(); see open-sse/utils/drainStatus.ts.
+          return wrapped(canonicalErrorResponse(499, drainFailure.message), expandedBody);
+        }
         const response = buildResponseJSON(collected, input.model, {
           hideThinkingSummary: parsed.options.hideThinkingSummary,
           toolNsMap: maps.namespace,
