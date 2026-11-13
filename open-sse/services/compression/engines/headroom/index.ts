@@ -33,7 +33,7 @@ import type {
   EngineValidationResult,
 } from "../types.ts";
 import type { CompressionResult } from "../../types.ts";
-import { crushMessages, DEFAULT_MIN_ROWS } from "./smartcrusher.ts";
+import { crushMessages, DEFAULT_MIN_ROWS, mapHeadroomContent } from "./smartcrusher.ts";
 import {
   TABULAR_FENCE_OPEN,
   TABULAR_FENCE_CLOSE,
@@ -195,34 +195,12 @@ export function reconstructHeadroom(body: Record<string, unknown>): Record<strin
 
   let changed = false;
   const restored = (messages as MessageLike[]).map((msg): MessageLike => {
-    if (typeof msg.content === "string") {
-      const reconstructed = restoreText(msg.content);
-      if (reconstructed !== msg.content) {
-        changed = true;
-        return { ...msg, content: reconstructed };
-      }
-      return { ...msg };
-    }
-
-    if (Array.isArray(msg.content)) {
-      let contentChanged = false;
-      const newContent = msg.content.map((part: Record<string, unknown>) => {
-        if (part["type"] !== "text" || typeof part["text"] !== "string") return part;
-        const reconstructed = restoreText(part["text"] as string);
-        if (reconstructed !== part["text"]) {
-          contentChanged = true;
-          return { ...part, text: reconstructed };
-        }
-        return part;
-      });
-      if (contentChanged) {
-        changed = true;
-        return { ...msg, content: newContent };
-      }
-      return { ...msg };
-    }
-
-    return { ...msg };
+    if (msg.cache_control !== undefined) return msg;
+    if (typeof msg.content !== "string" && !Array.isArray(msg.content)) return msg;
+    const content = mapHeadroomContent(msg.content, restoreText);
+    if (content === msg.content) return msg;
+    changed = true;
+    return { ...msg, content };
   });
 
   if (!changed) return body;

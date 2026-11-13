@@ -27,7 +27,7 @@ describe("active named combo resolution (Phase 2)", () => {
     const plan = selectCompressionPlan(config, null, 0, undefined, undefined, combos);
     assert.equal(plan.mode, "stacked");
     assert.equal(plan.source, "active-profile");
-    assert.deepEqual(plan.stackedPipeline, [{ engine: "session-dedup" }, { engine: "lite" }]);
+    assert.deepEqual(plan.stackedPipeline, combos.c1);
     const optedIn = selectCompressionPlan(
       config,
       null,
@@ -84,4 +84,34 @@ describe("activeComboResolves", () => {
     assert.equal(activeComboResolves(cfg({ activeComboId: "ghost" }), combos), false);
     assert.equal(activeComboResolves(cfg({ activeComboId: null }), combos), false);
   });
+});
+
+for (const header of ["off", "default", "safe"]) {
+  it(`active profile respects the request ${header} override`, () => {
+    const plan = selectCompressionPlan(
+      cfg({ activeComboId: "c1" }),
+      null,
+      5000,
+      undefined,
+      undefined,
+      combos,
+      header
+    );
+    if (header === "off") assert.equal(plan.mode, "off");
+    else assert.ok(plan.stackedPipeline.every((step) => !["rtk", "caveman"].includes(step.engine)));
+  });
+}
+it("master off remains a hard kill even with an active profile and explicit header", () => {
+  for (const header of [null, "allow-lossy", "c1"]) {
+    const plan = selectCompressionPlan(
+      cfg({ enabled: false, activeComboId: "c1" }),
+      null,
+      5000,
+      undefined,
+      undefined,
+      combos,
+      header
+    );
+    assert.equal(plan.mode, "off");
+  }
 });

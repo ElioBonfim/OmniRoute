@@ -20,7 +20,7 @@
  *     both homogeneous and heterogeneous arrays.
  */
 
-import { encodeTabularBlock, wrapTabular, kindOf } from "./tabular.ts";
+import { encodeTabularBlock, wrapTabular, kindOf, decodeTabular } from "./tabular.ts";
 import { encodeToonBlock, wrapToon } from "./toon.ts";
 
 /** Default minimum number of rows to trigger compaction. */
@@ -101,8 +101,21 @@ export function tryCompactJson(jsonStr: string, minRows: number = DEFAULT_MIN_RO
   // All elements must be objects (GCF encodes objects in tabular form).
   if (!allObjects(parsed)) return null;
 
+  // Reject numeric rounding, duplicate keys, and other parse/stringify changes.
+  // Canonicalize string escapes only; preserve the spelling of numeric tokens.
+  const canonicalInput = jsonStr.replace(/"(?:[^"\\]|\\.)*"|\s+/g, (token) =>
+    token.startsWith('"') ? JSON.stringify(JSON.parse(token)) : ""
+  );
+  if (canonicalInput !== JSON.stringify(parsed)) return null;
+
   const arr = parsed as Record<string, unknown>[];
   const compact = pickSmallestEncoding(arr);
+  // A representation is useful only if its decoder retains every original value.
+  try {
+    if (JSON.stringify(decodeTabular(compact)) !== JSON.stringify(parsed)) return null;
+  } catch {
+    return null;
+  }
 
   // Only use compact form if it is strictly smaller
   if (compact.length >= jsonStr.length) return null;
@@ -130,6 +143,41 @@ export type MessageLike = {
   content?: string | Array<Record<string, unknown>>;
   [key: string]: unknown;
 };
+
+/** Walk only text payloads, preserving cache breakpoints and non-text blocks. */
+export function mapHeadroomContent(
+  content: string | Array<Record<string, unknown>>,
+  transform: (text: string) => string,
+  allowToolResults = true
+): string | Array<Record<string, unknown>> {
+  if (typeof content === "string") return transform(content);
+  let changed = false;
+  const mapped = content.map((part) => {
+    if (!part || typeof part !== "object" || part.cache_control !== undefined) return part;
+    if ((part.type === "text" || part.type === "input_text") && typeof part.text === "string") {
+      const text = transform(part.text);
+      if (text === part.text) return part;
+      changed = true;
+      return { ...part, text };
+    }
+    if (
+      allowToolResults &&
+      part.type === "tool_result" &&
+      (typeof part.content === "string" || Array.isArray(part.content))
+    ) {
+      const content = mapHeadroomContent(
+        part.content as string | Array<Record<string, unknown>>,
+        transform,
+        false
+      );
+      if (content === part.content) return part;
+      changed = true;
+      return { ...part, content };
+    }
+    return part;
+  });
+  return changed ? mapped : content;
+}
 
 /**
  * Collect every JSON array (whole-string or inside a ```json fence) in non-system
@@ -160,13 +208,13 @@ export function collectCompactableArrays(
     while ((m = regex.exec(text)) !== null) pushIfCompactable(m[1].trim());
   };
   for (const msg of messages) {
-    if (msg.role === "system" || msg.role === "developer") continue;
-    if (typeof msg.content === "string") scanText(msg.content);
-    else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part["type"] === "text" && typeof part["text"] === "string")
-          scanText(part["text"] as string);
-      }
+    if (msg.role === "system" || msg.role === "developer" || msg.cache_control !== undefined)
+      continue;
+    if (typeof msg.content === "string" || Array.isArray(msg.content)) {
+      mapHeadroomContent(msg.content, (text) => {
+        scanText(text);
+        return text;
+      });
     }
   }
   return out;
@@ -218,42 +266,13 @@ export function crushMessages(
   let changed = false;
 
   const result = messages.map((msg): MessageLike => {
-    // Guard: never touch system messages. "developer" is the Responses-API equivalent of
-    // "system" used by newer models (e.g. Codex CLI, see open-sse/executors/codex.ts) and
-    // carries the same kind of instructions/tool-schema content — compacting a JSON array
-    // embedded there (e.g. an update_plan example) can corrupt the model's tool-calling
-    // instructions (9router#2132: broke Codex CLI plan mode).
-    if (msg.role === "system" || msg.role === "developer") return { ...msg };
-
-    if (typeof msg.content === "string") {
-      const crushed = crushText(msg.content, minRows);
-      if (crushed !== msg.content) {
-        changed = true;
-        return { ...msg, content: crushed };
-      }
-      return { ...msg };
-    }
-
-    if (Array.isArray(msg.content)) {
-      let contentChanged = false;
-      const newContent = msg.content.map((part: Record<string, unknown>) => {
-        if (part["type"] !== "text" || typeof part["text"] !== "string") return part;
-        const crushed = crushText(part["text"] as string, minRows);
-        if (crushed !== part["text"]) {
-          contentChanged = true;
-          return { ...part, text: crushed };
-        }
-        return part;
-      });
-      if (contentChanged) {
-        changed = true;
-        return { ...msg, content: newContent };
-      }
-      return { ...msg };
-    }
-
-    return { ...msg };
+    if (msg.role === "system" || msg.role === "developer" || msg.cache_control !== undefined)
+      return msg;
+    if (typeof msg.content !== "string" && !Array.isArray(msg.content)) return msg;
+    const content = mapHeadroomContent(msg.content, (text) => crushText(text, minRows));
+    if (content === msg.content) return msg;
+    changed = true;
+    return { ...msg, content };
   });
-
   return { messages: result, changed };
 }

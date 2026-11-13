@@ -8,7 +8,10 @@ import {
 import { isVerifiedNativeCodexRequest } from "../config/codexIdentity.ts";
 import { FORMATS } from "../translator/formats.ts";
 import { buildErrorBody, sanitizeErrorMessage } from "../utils/error.ts";
-import { createChatGptWebAdapter } from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/index.ts";
+import {
+  createChatGptWebAdapter,
+  chatGptWebExecutionNamespace,
+} from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/index.ts";
 import { ChatGptBrowserWorker } from "../vendor/codex-chatgpt-web/adapters/chatgpt-web/browser-worker.ts";
 import {
   browserLoginStateExists,
@@ -166,7 +169,8 @@ export function resolveChatGptWebCodexPreviousResponse(
 }
 
 function toolModeRequired(parsed: CodexParsedRequest): boolean {
-  if (parsed.options.toolChoice === "none") return false;
+  // History compaction is a summary-only round, including inline additional_tools.
+  if (parsed._compactionRequest || parsed.options.toolChoice === "none") return false;
   return (parsed.context.tools?.length ?? 0) > 0;
 }
 
@@ -396,7 +400,19 @@ export class ChatGptWebCodexExecutor extends BaseExecutor {
         connectionId,
         route
       );
-      const adapter = createChatGptWebAdapter(provider);
+      // Retire the original tool runtime before submitting a read-only summary.
+      // Keep its authority namespace distinct from the summary-only provider.
+      const compactionSourceNamespace = parsed._compactionRequest
+        ? chatGptWebExecutionNamespace({
+            ...provider,
+            chatgptWeb: {
+              ...provider.chatgptWeb,
+              localToolsEnabled: (parsed.context.tools?.length ?? 0) > 0,
+              autoApproveToolCalls: (parsed.context.tools?.length ?? 0) > 0,
+            },
+          })
+        : undefined;
+      const adapter = createChatGptWebAdapter(provider, { compactionSourceNamespace });
       const worker = ChatGptBrowserWorker.forProvider(provider);
       trackChatGptWebCodexRuntime(worker, connectionRuntimePaths(connectionId).brokerSocketPath);
       const maps = toolMaps(parsed);

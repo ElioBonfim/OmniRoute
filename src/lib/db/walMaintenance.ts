@@ -297,7 +297,16 @@ function startWalPassiveScheduler(
       // guard while readers hold the database is exactly the case the operator must
       // hear about, and a busy tick must not hide it.
       const guardMaxBytes = getWalGuardMaxBytes(env);
-      if (walBeforeBytes != null && walBeforeBytes > guardMaxBytes) {
+      const activeWalBytes = (stats.logFrames ?? 0) * 4096;
+      if (
+        (walBeforeBytes != null && walBeforeBytes > guardMaxBytes) ||
+        activeWalBytes > guardMaxBytes
+      ) {
+        try {
+          db.pragma("journal_size_limit = 67108864");
+        } catch {
+          // Best-effort pragma before RESTART so SQLite shrinks the WAL file on reset.
+        }
         // Never TRUNCATE a live WAL: rewriting the shared wal-index under handles that
         // hold it mapped can SIGBUS the process (issue #13973). RESTART checkpoints
         // the WAL and starts a new one without changing the mapped file geometry.
@@ -306,8 +315,9 @@ function startWalPassiveScheduler(
           isCloud,
           isBuildPhase: isNextBuildPhase(),
         });
+        const walAfterBytes = getWalFileSizeBytes(sqliteFile);
         console.warn(
-          `[DB] WAL above guard (${formatWalMb(walBeforeBytes)}MB > ${Math.floor(guardMaxBytes / (1024 * 1024))}MB); ` +
+          `[DB] WAL above guard (before=${formatWalMb(walBeforeBytes)}MB after=${formatWalMb(walAfterBytes)}MB > ${Math.floor(guardMaxBytes / (1024 * 1024))}MB); ` +
             `ran wal_checkpoint(RESTART) ok=${restart.ok} busy=${restart.busy}` +
             ` checkpointedFrames=${restart.checkpointedFrames}` +
             (restart.error ? ` error=${restart.error}` : "")
@@ -354,6 +364,11 @@ export function startWalMaintenance(
   stopWalMaintenance();
   if (sqliteFile === null || isCloud || isNextBuildPhase() || isAutomatedTestProcess()) return;
   activeDb = db;
+  try {
+    db.pragma("journal_size_limit = 67108864");
+  } catch {
+    // Ignore if driver does not support journal_size_limit pragma.
+  }
   busyTotal = mergeBusyTotal(priorBusyTotal, loadPersistedBusyTotal(db));
   startWalPassiveScheduler(db, sqliteFile, env);
 }

@@ -114,7 +114,7 @@ async function inspectStoredState(
   }
   const { chromium } = await loadPlaywrightCore();
   const verifierBrowser = config.cdpEndpoint
-    ? await chromium.connectOverCDP(config.cdpEndpoint, cdpConnectOptions())
+    ? await chromium.connectOverCDP(config.cdpEndpoint, { ...cdpConnectOptions(), noDefaults: true })
     : await chromium.launch({
         executablePath: config.chromeExecutablePath,
         headless: !config.headed,

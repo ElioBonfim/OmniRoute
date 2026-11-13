@@ -1,7 +1,7 @@
 {
   "id": "build-webpack",
   "label": "Webpack Build",
-  "description": "Keep webpack errors/warnings and compilation summary.",
+  "description": "Remove blank and module-summary noise while retaining multiline diagnostics and their context.",
   "category": "build",
   "priority": 84,
   "match": {
@@ -11,7 +11,7 @@
   },
   "rules": {
     "stripAnsi": true,
-    "includePatterns": ["ERROR in", "WARNING in", "compiled ", "asset ", "Entrypoint"],
+    "includePatterns": [],
     "dropPatterns": ["^\\s*$", "^cacheable modules"],
     "collapsePatterns": ["^asset "],
     "deduplicate": true,
@@ -20,8 +20,8 @@
     "tailLines": 50
   },
   "preserve": {
-    "errorPatterns": ["ERROR in"],
-    "summaryPatterns": ["compiled "]
+    "errorPatterns": ["ERROR in", "WARNING in"],
+    "summaryPatterns": ["compiled ", "^(?!asset\\s|Entrypoint\\s|cacheable modules|\\s*$).+"]
   },
   "tests": [
     {

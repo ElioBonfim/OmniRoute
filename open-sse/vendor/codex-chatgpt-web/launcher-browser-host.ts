@@ -257,7 +257,7 @@ export async function connectLauncherBrowserHost(
   await assertCdpReady(descriptor, Math.min(timeoutMs, 5_000));
   let browser: Browser;
   try {
-    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs });
+    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs, noDefaults: true });
   } catch (error) {
     throw new Error(
       `Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`

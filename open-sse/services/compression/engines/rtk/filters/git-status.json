@@ -16,7 +16,8 @@
       "^Changes ",
       "^Untracked files:",
       "^\\s*(modified|new file|deleted|renamed|both modified):",
-      "^\\s*[MADRCU?!]{1,2}\\s+"
+      "^\\s*[MADRCU?!]{1,2}\\s+",
+      "^\\s+\\S"
     ],
     "dropPatterns": ["^\\s*$", "^\\s*\\(use .*\\)$"],
     "collapsePatterns": [],

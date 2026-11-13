@@ -1,6 +1,6 @@
 import { recordFinishedOwnedConversation } from "./owned-conversations";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
-import { assertChatGptModelFamily, selectChatGptModelFamily } from "./model-selection";
+import { assertChatGptModelFamily, selectChatGptModelFamily, throwIfChatGptProUsageLimited } from "./model-selection";
 import {
   releasePersistentChatGptPage,
   openChatGptContext,
@@ -1900,7 +1900,7 @@ export class ChatGptBrowserWorker {
       );
     }
     this.browser = this.config.cdpEndpoint
-      ? await chromium.connectOverCDP(this.config.cdpEndpoint)
+      ? await chromium.connectOverCDP(this.config.cdpEndpoint, { noDefaults: true })
       : await chromium.launch({
           executablePath: this.config.chromeExecutablePath,
           headless: !this.config.headed,
@@ -1955,7 +1955,7 @@ export class ChatGptBrowserWorker {
         );
       }
       const browser = this.config.cdpEndpoint
-        ? await chromium.connectOverCDP(this.config.cdpEndpoint)
+        ? await chromium.connectOverCDP(this.config.cdpEndpoint, { noDefaults: true })
         : await chromium.launch({
             executablePath: this.config.chromeExecutablePath,
             headless: !this.config.headed,
@@ -2121,12 +2121,14 @@ export class ChatGptBrowserWorker {
       const state = await readChatGptEffortSnapshot(container).catch((error) => {
         throw chatGptModelControlUnavailableAdapterError(String(error));
       });
+      const requestedEffortAvailable =
+        uiEffortIndex <= state.max - state.min && state.available[uiEffortIndex] === true;
+      if (!requestedEffortAvailable && uiEffortIndex === 4 && modelFamily) {
+        await throwIfChatGptProUsageLimited(activation, modelFamily);
+      }
       if (uiEffortIndex > state.max - state.min) {
         throw chatGptModelControlUnavailableAdapterError(
-          `ChatGPT effort slider does not expose item index ${uiEffortIndex} (min=${state.min}; max=${state.max})` +
-            (uiEffortIndex === 4
-              ? " ChatGPT may have temporarily hidden Pro because you reached its usage limit."
-              : "")
+          `ChatGPT effort slider does not expose item index ${uiEffortIndex} (min=${state.min}; max=${state.max})`
         );
       }
       if (!state.available[uiEffortIndex]) {
@@ -4857,7 +4859,7 @@ export class ChatGptBrowserWorker {
       let capturedResponse = false;
       const sentAt = Date.now();
       const visibleTrace = new ChatGptVisibleTraceTracker();
-      const markdownBuffer = new ChatGptMarkdownBuffer();
+      const markdownBuffer = new ChatGptMarkdownBuffer(undefined, undefined, turn.compaction ? "complete" : "stream");
       const checkpointStream = turn.captureLunaCheckpoint
         ? new ChatGptLunaCheckpointStream()
         : undefined;

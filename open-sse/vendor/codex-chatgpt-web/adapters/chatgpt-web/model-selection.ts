@@ -174,3 +174,56 @@ export async function assertChatGptModelFamily(
   } while (true);
   throw familyError(family);
 }
+
+/** Only a disabled requested model and its newly displayed tooltip establish a limit. */
+export function throwIfChatGptProUsageLimitedEvidence(
+  disabled: boolean,
+  tooltipText: string
+): void {
+  if (!disabled || !/^(?:Limite atingido\.|Limit reached\.)/i.test(tooltipText.trim())) return;
+  throw new ChatGptWebAdapterError("ChatGPT reports a usage limit for the requested Pro model.", {
+    status: 429,
+    errorType: "rate_limit_error",
+    code: "usage_limit_reached",
+    retryable: false,
+  });
+}
+
+export async function throwIfChatGptProUsageLimited(
+  menu: EffortMenu,
+  family: ChatGptWebModelFamily
+): Promise<void> {
+  const selectedFamily = familyOption(menu, family);
+  if (
+    (await selectedFamily.count()) !== 1 ||
+    (await selectedFamily.getAttribute("aria-checked")) !== "true"
+  )
+    return;
+  const pro = menu.menu.getByRole("menuitemradio", {
+    name: "Pro",
+    exact: true,
+    includeHidden: true,
+  });
+  if ((await pro.count()) !== 1 || (await pro.getAttribute("aria-disabled")) !== "true") return;
+  const view = menu.menu.locator("[data-model-picker-view]");
+  if ((await view.count()) !== 1) return;
+  if ((await view.getAttribute("data-model-picker-view")) === "simple") {
+    const toggle = view
+      .locator('[data-model-picker-view-toggle="true"]:not([aria-hidden="true"])')
+      .filter({ visible: true });
+    if ((await toggle.count()) !== 1) return;
+    await toggle.click({ timeout: 5_000 });
+  }
+  const tooltip = menu.menu.page().getByRole("tooltip").filter({ visible: true });
+  // Do not attribute an already-open, unrelated tooltip to this control.
+  if ((await tooltip.count()) !== 0) return;
+  await pro.hover({ timeout: 5_000 });
+  try {
+    await tooltip.waitFor({ state: "visible", timeout: 2_000 });
+  } catch {
+    return;
+  }
+  if ((await tooltip.count()) === 1) {
+    throwIfChatGptProUsageLimitedEvidence(true, await tooltip.innerText());
+  }
+}

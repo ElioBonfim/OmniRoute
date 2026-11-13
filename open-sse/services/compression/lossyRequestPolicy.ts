@@ -4,7 +4,7 @@ import type { DerivedPlan } from "./deriveDefaultPlan.ts";
 /**
  * HouMinXi's plan for the default path: dedup and whitespace folding stay on.
  * Summaries, relevance filters, and style rewrites run only when the request
- * opts in.
+ * opts in or the operator explicitly selects an active named profile.
  */
 const LOSSY_SINGLE_MODES = new Set([
   "standard",
@@ -40,8 +40,13 @@ export function headerOptsIntoLossy(header: string | null, plan: DerivedPlan): b
   return plan.source === "request-header";
 }
 
-/** Replace lossy steps with dedup + whitespace folding unless the request opted in. */
+/**
+ * Honor an explicit active profile for clients using the operator configuration.
+ * Any non-empty request header still goes through the request policy, including
+ * safe/default/off and unknown values. Implicit defaults remain lossless.
+ */
 export function applyLossyRequestPolicy(plan: DerivedPlan, header: string | null): DerivedPlan {
+  if (plan.source === "active-profile" && !header?.trim()) return plan;
   if (headerOptsIntoLossy(header, plan)) return plan;
   return downgradeUnrequestedLossy(plan);
 }

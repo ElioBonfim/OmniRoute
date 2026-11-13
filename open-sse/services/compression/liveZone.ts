@@ -116,33 +116,99 @@ function isToolOutputItem(value: unknown): boolean {
     item.role === "tool" ||
     item.role === "function" ||
     item.role === "tool_result" ||
+    item.type === "custom_tool_call_output" ||
     item.type === "function_call_output" ||
     item.type === "local_shell_call_output" ||
     item.type === "apply_patch_call_output" ||
     item.type === "computer_call_output" ||
-    item.type === "tool_result"
+    item.type === "tool_result" ||
+    nestedToolResults(item).length > 0
   );
+}
+
+function nestedToolResults(item: Record<string, unknown>): Record<string, unknown>[] {
+  if (item.role !== "user" || !Array.isArray(item.content)) return [];
+  return item.content.filter(
+    (part): part is Record<string, unknown> =>
+      !!part && typeof part === "object" && part.type === "tool_result"
+  );
+}
+
+// Ignore only rewritable text. Keep images, block metadata, cache breakpoints and
+// non-tool user text in the correspondence check, including nested Claude results.
+function contentIdentity(content: unknown): unknown {
+  if (typeof content === "string") return { kind: "text" };
+  if (!Array.isArray(content)) return { kind: "unchanged", value: content };
+  return {
+    kind: "blocks",
+    value: content.map((part) => {
+      if (part && typeof part === "object" && !Array.isArray(part)) {
+        const block = part as Record<string, unknown>;
+        if (
+          block.cache_control === undefined &&
+          typeof block.text === "string" &&
+          (block.type === undefined || block.type === "text" || block.type === "input_text")
+        ) {
+          return {
+            kind: "text-block",
+            metadata: Object.fromEntries(Object.entries(block).filter(([key]) => key !== "text")),
+          };
+        }
+      }
+      return { kind: "unchanged-block", value: part };
+    }),
+  };
 }
 
 // Payload text may change, but role/type and all call linkage must retain their source slot.
 function itemIdentity(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (nestedToolResults(item).length > 0) {
+    return digest({
+      ...item,
+      content: (item.content as unknown[]).map((part) => {
+        if (!part || typeof part !== "object" || Array.isArray(part)) return part;
+        const block = part as Record<string, unknown>;
+        if (block.type !== "tool_result" || block.cache_control !== undefined) return block;
+        return { ...block, content: contentIdentity(block.content) };
+      }),
+    });
+  }
+  if (item.type === "custom_tool_call_output") {
+    const field = item.output !== undefined && item.output !== null ? "output" : "content";
+    const output = item[field];
+    // Wrapped custom results carry execution metadata alongside their text.
+    const identity =
+      output &&
+      typeof output === "object" &&
+      !Array.isArray(output) &&
+      typeof (output as Record<string, unknown>).output === "string"
+        ? { ...(output as Record<string, unknown>), output: null }
+        : contentIdentity(output);
+    return digest({ ...item, [field]: identity });
+  }
   return digest(
     Object.fromEntries(
-      Object.entries(value).filter(([key]) => key !== "content" && key !== "output")
+      Object.entries(item).filter(([key]) => key !== "content" && key !== "output")
     )
   );
 }
 
-function toolLinkage(value: unknown): string | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+function toolLinkages(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const item = value as Record<string, unknown>;
+  const nested = nestedToolResults(item);
+  if (nested.length > 0) {
+    const links = nested.map(toolLinkages);
+    return links.some((item) => item.length === 0) ? [] : links.flat();
+  }
   const link = item.tool_call_id ?? item.call_id ?? item.tool_use_id ?? item.id;
-  if (typeof link === "string" && link.length > 0) return `call:${link}`;
+  if (typeof link === "string" && link.length > 0) return [`call:${link}`];
   // Legacy function results use the function name rather than a call ID.
   return item.role === "function" && typeof item.name === "string" && item.name.length > 0
-    ? `function:${item.name}`
-    : null;
+    ? [`function:${item.name}`]
+    : [];
 }
 
 function makeKey(options: LiveZoneOptions, field: string): string | null {
@@ -340,11 +406,13 @@ async function compressLiveToolOutputs(
   const identities = Array.from(contextItems, itemIdentity);
   const toolLinkCounts = new Map<string, number>();
   for (const item of contextItems) {
-    const link = isToolOutputItem(item) ? toolLinkage(item) : null;
-    if (link !== null) toolLinkCounts.set(link, (toolLinkCounts.get(link) ?? 0) + 1);
+    if (!isToolOutputItem(item)) continue;
+    for (const link of toolLinkages(item)) {
+      toolLinkCounts.set(link, (toolLinkCounts.get(link) ?? 0) + 1);
+    }
   }
   const originalToolDigests = liveToolIndexes.map((index) => digest(transformedLive[index]));
-  const liveToolLinks = liveToolIndexes.map((index) => toolLinkage(transformedLive[index]));
+  const liveToolLinks = liveToolIndexes.map((index) => toolLinkages(transformedLive[index]));
   const liveResult = await compress({ ...body, [field]: compressionItems });
   const transformed = liveResult.body[field];
   if (
@@ -355,8 +423,8 @@ async function compressLiveToolOutputs(
     ) ||
     liveToolIndexes.some((liveIndex, index) => {
       if (digest(transformed[liveOffset + liveIndex]) === originalToolDigests[index]) return false;
-      const link = liveToolLinks[index];
-      return link === null || toolLinkCounts.get(link) !== 1;
+      const links = liveToolLinks[index];
+      return links.length === 0 || links.some((link) => toolLinkCounts.get(link) !== 1);
     })
   ) {
     return { liveResult: { body, compressed: false, stats: null }, transformedLive };

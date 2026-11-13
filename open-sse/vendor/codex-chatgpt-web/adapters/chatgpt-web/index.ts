@@ -324,7 +324,7 @@ export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
 
 export function createChatGptWebAdapter(
   provider: CodexProviderConfig,
-  dependencies: { broker?: TurnBrokerOwner } = {}
+  dependencies: { broker?: TurnBrokerOwner; compactionSourceNamespace?: string } = {}
 ): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = dependencies.broker ?? TurnBroker.forSocket(brokerSocketPath(provider));
@@ -803,7 +803,9 @@ export function createChatGptWebAdapter(
             chatGptWebTurnRetryPolicy.clear(retryKey);
             return;
           }
-          const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
+          // A summary-only provider can have a different capability namespace from its source turn.
+          const sourceNamespace = dependencies.compactionSourceNamespace ?? executionNamespace;
+          const responseExecutionKey = `${sourceNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
           await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
         }
         const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;

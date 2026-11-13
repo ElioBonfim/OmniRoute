@@ -8,7 +8,7 @@
  * Design notes
  * ─────────────
  * - Engine → compressFn adapter: wraps a plain string into the minimal
- *   `{messages:[{role:"user",content:text}]}` body that every engine expects,
+ *   message body for the engine scope (tool for RTK, user for other engines),
  *   calls `applyAsync` when the engine declares one (H10-ready), else `apply`,
  *   then extracts `messages[0].content` back out. Engines that return
  *   non-string content fall back to the original string (fail-open).
@@ -171,7 +171,7 @@ export const BENCHMARK_CORPUS: EvalCase[] = [
  * Adapt a registered compression engine into the `CompressFn` interface that
  * `runCompressionEval` expects.
  *
- * Wraps the input string as `{messages:[{role:"user",content:text}]}`, calls
+ * Wraps the input string as a tool result for RTK and a user message for other engines, calls
  * `applyAsync` when available or `apply` otherwise, then extracts the resulting
  * `messages[0].content` string. Falls back to the original text on any error
  * or if the engine returns a non-string content value (fail-open).
@@ -186,7 +186,9 @@ export function engineToCompressFn(engineId: string): CompressFn {
 
   return async (text: string): Promise<string> => {
     const body: Record<string, unknown> = {
-      messages: [{ role: "user", content: text }],
+      // RTK intentionally ignores ordinary user prose. Feed the scope its production
+      // engine accepts, or this benchmark silently measures a no-op.
+      messages: [{ role: engineId === "rtk" ? "tool" : "user", content: text }],
       // #7746 follow-up: CCR only compresses for callers that advertise the
       // omniroute_ccr_retrieve tool (otherwise its content-addressed marker is
       // unresolvable). Real CCR traffic always carries this tool, so the
@@ -211,7 +213,10 @@ export function engineToCompressFn(engineId: string): CompressFn {
         // the first string content otherwise.
         for (let i = messages.length - 1; i >= 0; i--) {
           const c = (messages[i] as Record<string, unknown>)["content"];
-          if (typeof c === "string" && (messages[i] as Record<string, unknown>)["role"] !== "system") {
+          if (
+            typeof c === "string" &&
+            (messages[i] as Record<string, unknown>)["role"] !== "system"
+          ) {
             return c;
           }
         }

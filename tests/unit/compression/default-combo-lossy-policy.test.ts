@@ -163,3 +163,15 @@ test("a named combo chosen by the compression header is not replaced by the defa
   assert.ok(!debugLines.includes(DEFAULT_COMBO_APPLIED), "the header's combo should run");
   assert.match(toolContent, RTK_MARKER);
 });
+
+test("an explicitly selected active combo reaches the provider without a client header", async () => {
+  await storeLegacyStackedSettings();
+  const active = compressionCombosDb.createCompressionCombo({
+    name: "dev-economia-test",
+    pipeline: [{ engine: "rtk", intensity: "standard" }],
+  });
+  await compressionDb.updateCompressionSettings({ activeComboId: active.id });
+  const { toolContent, debugLines } = await sendRepeatedToolOutput();
+  assert.ok(!debugLines.includes(DEFAULT_COMBO_APPLIED));
+  assert.match(toolContent, RTK_MARKER);
+});

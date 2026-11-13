@@ -225,12 +225,40 @@ function processRtkCodeBlocksOnly(
   };
 }
 
+/** Structured tool data must retain all fields, rows, and original numeric spelling. */
+function isStructuredJson(text: string): boolean {
+  const value = text.trim();
+  if (!(
+    (value.startsWith("{") && value.endsWith("}")) ||
+    (value.startsWith("[") && value.endsWith("]"))
+  ))
+    return false;
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function processRtkText(
   text: string,
   options: { command?: string | null; config?: Partial<RtkConfig>; skipFilters?: boolean } = {}
 ): RtkProcessResult {
   const config = mergeRtkConfig(options.config);
   const originalTokens = estimateCompressionTokens(text);
+  // Generic JSON line filters can drop entire records even below operator limits.
+  // Keep complete JSON byte-identical rather than treating it as repetitive logs.
+  if (isStructuredJson(text)) {
+    return {
+      text,
+      compressed: false,
+      originalTokens,
+      compressedTokens: originalTokens,
+      techniquesUsed: [],
+      rulesApplied: [],
+    };
+  }
   const techniquesUsed: string[] = [];
   const rulesApplied: string[] = [];
   const rawOutputPointers: RtkRawOutputPointer[] = [];
