@@ -30,4 +30,5 @@ if [ -d "$DATA_PATH" ] && [ ! -w "$DATA_PATH" ]; then
   fi
 fi
 
+: > /tmp/omniroute-started-at
 exec "$@"

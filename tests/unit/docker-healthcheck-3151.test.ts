@@ -6,13 +6,25 @@ import http from "node:http";
 // hit 127.0.0.1 and swallowed every error (empty Output, undiagnosable).
 // The hardened script exports an injectable `probeHealth` helper that tries an
 // ordered host list and surfaces the last error on total failure.
-const { probeHealth } = (await import("../../scripts/dev/healthcheck.mjs")) as {
+const { probeHealth, probeTcp, isWithinStartupGrace } = (await import(
+  "../../scripts/dev/healthcheck.mjs"
+)) as {
   probeHealth: (opts: {
     port: number | string;
     hosts?: string[];
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
   }) => Promise<string>;
+  probeTcp: (opts: {
+    port: number | string;
+    hosts?: string[];
+    timeoutMs?: number;
+  }) => Promise<string>;
+  isWithinStartupGrace: (opts: {
+    startedAtMs: number;
+    nowMs?: number;
+    graceMs?: number;
+  }) => boolean;
 };
 
 /** Start an ephemeral HTTP server bound only to the given host. */
@@ -90,5 +102,24 @@ test("probeHealth throws a non-empty error string when every host fails", async 
       assert.ok(err.message.length > 0, "error message must be non-empty (not swallowed)");
       return true;
     }
+  );
+});
+
+test("probeTcp accepts a bound port during startup", async () => {
+  const { server, port } = await startServer("127.0.0.1");
+  servers.push(server);
+
+  const ok = await probeTcp({ port, hosts: ["127.0.0.1"] });
+  assert.equal(ok, "127.0.0.1");
+});
+
+test("startup grace expires after its bounded window", () => {
+  assert.equal(
+    isWithinStartupGrace({ startedAtMs: 1_000, nowMs: 120_999, graceMs: 120_000 }),
+    true
+  );
+  assert.equal(
+    isWithinStartupGrace({ startedAtMs: 1_000, nowMs: 121_001, graceMs: 120_000 }),
+    false
   );
 });

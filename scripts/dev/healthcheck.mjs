@@ -30,10 +30,15 @@
 
 import { pathToFileURL } from "node:url";
 import { networkInterfaces } from "node:os";
+import { stat } from "node:fs/promises";
+import { connect } from "node:net";
 
 const DEFAULT_HOSTS = ["127.0.0.1", "localhost", "::1"];
 const DEFAULT_TIMEOUT_MS = 4000;
 const DEFAULT_HEALTH_PATH = "/healthz";
+const DEFAULT_STARTUP_GRACE_MS = 120000;
+const DEFAULT_STARTUP_MARKER = "/tmp/omniroute-started-at";
+const DEFAULT_TCP_TIMEOUT_MS = 750;
 
 function normalizeBasePath(value) {
   const trimmed = typeof value === "string" ? value.trim() : "";
@@ -140,6 +145,67 @@ export async function probeHealth({
   throw lastError;
 }
 
+/**
+ * Check whether a TCP listener is available. During early startup this proves
+ * the server has bound its port even when synchronous model sync temporarily
+ * stalls the Node event loop and HTTP cannot answer yet.
+ */
+export async function probeTcp({
+  port,
+  hosts = DEFAULT_HOSTS,
+  timeoutMs = DEFAULT_TCP_TIMEOUT_MS,
+  connectImpl = connect,
+} = {}) {
+  let lastError = new Error("no hosts to probe");
+  for (const host of hosts) {
+    try {
+      await new Promise((resolve, reject) => {
+        const socket = connectImpl({ host, port: Number(port) });
+        const timer = setTimeout(() => {
+          socket.destroy();
+          reject(new Error("timeout"));
+        }, timeoutMs);
+        socket.once("connect", () => {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve();
+        });
+        socket.once("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+      return host;
+    } catch (err) {
+      lastError = new Error(`${host}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw lastError;
+}
+
+export function isWithinStartupGrace({
+  startedAtMs,
+  nowMs = Date.now(),
+  graceMs = DEFAULT_STARTUP_GRACE_MS,
+} = {}) {
+  return (
+    Number.isFinite(startedAtMs) &&
+    Number.isFinite(nowMs) &&
+    Number.isFinite(graceMs) &&
+    graceMs > 0 &&
+    nowMs >= startedAtMs &&
+    nowMs - startedAtMs <= graceMs
+  );
+}
+
+async function readStartupMarker(markerPath = DEFAULT_STARTUP_MARKER) {
+  try {
+    return (await stat(markerPath)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   const port = process.env.DASHBOARD_PORT || process.env.PORT || "20128";
 
@@ -151,6 +217,17 @@ async function main() {
   }
 
   try {
+    const graceMs = Number(
+      process.env.OMNIROUTE_HEALTHCHECK_STARTUP_GRACE_MS || DEFAULT_STARTUP_GRACE_MS
+    );
+    const startedAtMs = await readStartupMarker(
+      process.env.OMNIROUTE_HEALTHCHECK_STARTUP_MARKER || DEFAULT_STARTUP_MARKER
+    );
+    if (isWithinStartupGrace({ startedAtMs, graceMs })) {
+      await probeTcp({ port, hosts });
+      process.exit(0);
+    }
+
     const healthPath = resolveHealthPath(
       process.env.OMNIROUTE_BASE_PATH,
       process.env.OMNIROUTE_HEALTHCHECK_PATH
