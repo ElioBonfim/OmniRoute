@@ -207,8 +207,30 @@ test("runWithProxyContext degrades to a direct connection when directFallbackOnU
   });
 });
 
+test("runWithProxyContext uses direct egress when the data-plane fallback flag is enabled", async () => {
+  await withEnv(
+    {
+      OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false",
+      OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "true",
+    },
+    async () => {
+      let ran = false;
+      const result = await runWithProxyContext(
+        { type: "http", host: "127.0.0.1", port: "9" },
+        async () => {
+          ran = true;
+          return "direct-data-ok";
+        }
+      );
+
+      assert.equal(ran, true, "callback must run once through direct egress");
+      assert.equal(result, "direct-data-ok");
+    }
+  );
+});
+
 test("runWithProxyContext keeps strict pinning when the direct fallback feature flag is off", async () => {
-  await withEnv({ OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false" }, async () => {
+  await withEnv({ OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false", OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "false" }, async () => {
     // #9100: with the flag off the request goes through the non-blocking T14
     // probe; keep it in flight so the unreachable probe aborts it (strict
     // pinning — no direct fallback — still applies).

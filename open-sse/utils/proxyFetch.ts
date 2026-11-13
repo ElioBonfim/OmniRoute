@@ -546,8 +546,15 @@ export async function runWithProxyContext(
 
   // The caller must opt in, and the runtime feature flag must also be enabled.
   // This fallback changes egress IP, so upgrades must not silently turn it on.
-  const directFallbackOnUnreachable =
+  const controlPlaneFallback =
     opts?.directFallbackOnUnreachable === true && isControlPlaneProxyDirectFallbackEnabled();
+  // Production data traffic may opt in through an environment-only switch.
+  // The blocking reachability check runs before dispatch, so a failed proxy
+  // cannot cause the same paid upstream request to be sent twice.
+  const dataPlaneFallback =
+    opts?.directFallbackOnUnreachable !== true &&
+    process.env.OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK?.trim().toLowerCase() === "true";
+  const directFallbackOnUnreachable = controlPlaneFallback || dataPlaneFallback;
   // Keep an explicit direct sentinel so resolveProxyForRequest cannot re-read
   // HTTPS_PROXY/HTTP_PROXY after the control-plane route decision.
   const runDirect = () => proxyContext.run(DIRECT_PROXY_CONTEXT, fn);
