@@ -414,3 +414,24 @@ test("getProviderUsageSince — providers '-' and NULL are excluded", () => {
     undefined
   );
 });
+
+test("provider metrics uses index-only reads for aggregation and recent-status lookups", () => {
+  const db = core.getDbInstance();
+  const plan = db.prepare(`EXPLAIN QUERY PLAN ${mod.PROVIDER_METRICS_SQL}`).all() as Array<{
+    detail: string;
+  }>;
+
+  for (const alias of ["c", "c2", "c3"]) {
+    assert.ok(
+      plan.some((row) =>
+        row.detail.includes(`${alias} USING COVERING INDEX idx_cl_provider_metrics_cover`)
+      ),
+      `Expected an index-only read for ${alias}: ${JSON.stringify(plan)}`
+    );
+  }
+
+  assert.ok(
+    !plan.some((row) => row.detail.includes("USE TEMP B-TREE")),
+    `Provider metrics must not sort retained call-log rows: ${JSON.stringify(plan)}`
+  );
+});
