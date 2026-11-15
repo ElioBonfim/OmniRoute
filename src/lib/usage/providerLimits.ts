@@ -287,6 +287,7 @@ function shouldFailClosedForProviderLimitsProxy(
   connection: ProviderConnectionLike,
   proxyInfo: unknown
 ): boolean {
+  if (isRecord(proxyInfo) && proxyInfo.strategy === "failover") return true;
   return connection.authType === "oauth" && isAccountScopedProxyResolution(proxyInfo);
 }
 

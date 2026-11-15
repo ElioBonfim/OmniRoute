@@ -1010,6 +1010,14 @@ export function decideProxyResolutionFailure(
   err: unknown,
   env: { PROXY_FAIL_OPEN?: string } = process.env
 ): null {
+  if (
+    err &&
+    typeof err === "object" &&
+    "code" in err &&
+    err.code === "PROXY_FAILOVER_UNAVAILABLE"
+  ) {
+    throw err;
+  }
   if ((env.PROXY_FAIL_OPEN ?? "").trim().toLowerCase() === "true") {
     log.warn(
       "PROXY",
