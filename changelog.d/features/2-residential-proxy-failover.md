@@ -1,0 +1,1 @@
+- **feat(sse):** Add fixed-priority residential proxy failover with forwarding probes, automatic recovery, and fail-closed routing when every assigned member is unavailable. (#2 — thanks @ElioBonfim)
