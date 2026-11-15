@@ -244,8 +244,10 @@ test("planner uses the provider/timestamp indexes, no table scan", () => {
   };
   const providerPlan = queryPlan(stats.PROVIDER_CALL_STATS_SQL, params);
   assert.ok(
-    providerPlan.includes("USING INDEX idx_cl_provider_timestamp"),
-    `provider query must use idx_cl_provider_timestamp, got: ${providerPlan}`
+    /USING (?:COVERING )?INDEX idx_cl_(?:provider_timestamp|provider_metrics_cover)/.test(
+      providerPlan
+    ),
+    `provider query must seek a provider index, got: ${providerPlan}`
   );
   assert.ok(
     !providerPlan.includes("SCAN TABLE"),

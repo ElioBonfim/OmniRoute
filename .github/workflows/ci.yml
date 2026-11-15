@@ -12,7 +12,7 @@ on:
     # lands code nobody validated as a PR into main.
     branches: [main]
   pull_request:
-    branches: [main, "release/**"]
+    branches: [main, "release/**", "primage/production-*"]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
   merge_group:
     types: [checks_requested]

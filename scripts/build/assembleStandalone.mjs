@@ -115,6 +115,21 @@ export const NATIVE_ASSET_ENTRIES = [
 
 /** @type {{label:string, src:string[], dest:string[]}[]} */
 export const EXTRA_MODULE_ENTRIES = [
+  {
+    label: "compression worker external: turndown",
+    src: ["node_modules", "turndown"],
+    dest: ["node_modules", "turndown"],
+  },
+  {
+    label: "compression worker external: turndown-plugin-gfm",
+    src: ["node_modules", "turndown-plugin-gfm"],
+    dest: ["node_modules", "turndown-plugin-gfm"],
+  },
+  {
+    label: "turndown DOM parser",
+    src: ["node_modules", "@mixmark-io", "domino"],
+    dest: ["node_modules", "@mixmark-io", "domino"],
+  },
   // The source CLI loads tsx/esm dynamically, outside Next's traced server graph.
   // Keep its compiler and the installed target-platform binary together (#12152).
   { label: "tsx CLI loader", src: ["node_modules", "tsx"], dest: ["node_modules", "tsx"] },

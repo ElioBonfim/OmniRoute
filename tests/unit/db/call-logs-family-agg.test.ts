@@ -122,11 +122,11 @@ test("family aggregation — last-status subqueries seek the provider index (mig
     .join(" | ");
   const correlated = plan.match(/SEARCH c[23] USING (?:COVERING )?INDEX (\w+)/g) ?? [];
   assert.equal(correlated.length, 2, `both correlated subqueries must SEARCH an index: ${plan}`);
-  // Filtering request_type requires a row lookup; both status lookups still seek by provider.
+  // The migration-226 covering index also serves the logical-call filter.
   assert.doesNotMatch(plan, /SCAN c[23]\b/);
   for (const step of correlated) {
     assert.ok(
-      /idx_cl_(?:health_matrix_cover|provider_timestamp)/.test(step),
+      /idx_cl_(?:health_matrix_cover|provider_timestamp|provider_metrics_cover)/.test(step),
       `provider index must serve the last-status subqueries: ${step}`
     );
   }

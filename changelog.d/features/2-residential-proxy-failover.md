@@ -1,1 +1,2 @@
 - **feat(sse):** Add fixed-priority residential proxy failover with forwarding probes, automatic recovery, and fail-closed routing when every assigned member is unavailable. (#2 — thanks @ElioBonfim)
+- **fix:** Preserve cached content and exact JSON values during compaction, synchronize refreshed token expiry fields, restore optional browser imports and worker dependencies, and repair inherited production CI failures. (#2 — thanks @ElioBonfim)

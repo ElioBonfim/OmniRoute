@@ -287,7 +287,7 @@ for (const [label, store] of [
   test(`${label}: a request over the window still gets its past tool results truncated to fit`, async () => {
     await store();
     const toolContent = await sendPastToolResult(undefined, OVER_WINDOW_TOOL_RESULT);
-    assert.match(toolContent, /\.\.\.\[truncated\]$/);
+    assert.match(toolContent, /\.\.\.\s*\[truncated\]$/);
     assert.ok(toolContent.length < OVER_WINDOW_TOOL_RESULT.length / 10);
   });
 }

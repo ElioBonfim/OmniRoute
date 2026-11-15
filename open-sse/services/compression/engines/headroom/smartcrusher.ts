@@ -98,6 +98,14 @@ export function tryCompactJson(jsonStr: string, minRows: number = DEFAULT_MIN_RO
 
   if (!Array.isArray(parsed) || parsed.length < minRows) return null;
 
+  // Parsing must not silently round integers, discard duplicate keys, or erase -0.
+  // Whitespace inside string values remains significant.
+  const compactSource = jsonStr.replace(
+    /("(?:\\.|[^"\\])*")|\s+/g,
+    (_match, quoted) => quoted ?? ""
+  );
+  if (compactSource !== JSON.stringify(parsed)) return null;
+
   // All elements must be objects (GCF encodes objects in tabular form).
   if (!allObjects(parsed)) return null;
 
@@ -135,8 +143,17 @@ function isTextBlock(part: unknown): part is Record<string, unknown> & { text: s
   return (
     !!part &&
     typeof part === "object" &&
-    (part as Record<string, unknown>)["type"] === "text" &&
+    ["text", "input_text"].includes(String((part as Record<string, unknown>)["type"])) &&
     typeof (part as Record<string, unknown>)["text"] === "string"
+  );
+}
+
+function hasCacheBreakpoint(part: Record<string, unknown>): boolean {
+  if (part["cache_control"]) return true;
+  const content = part["content"];
+  return (
+    Array.isArray(content) &&
+    content.some((block) => block && typeof block === "object" && hasCacheBreakpoint(block))
   );
 }
 
@@ -191,6 +208,7 @@ export function collectCompactableArrays(
 ): Record<string, unknown>[][] {
   const out: Record<string, unknown>[][] = [];
   const pushIfCompactable = (jsonStr: string) => {
+    if (tryCompactJson(jsonStr, minRows) === null) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonStr);
@@ -209,7 +227,7 @@ export function collectCompactableArrays(
     while ((m = regex.exec(text)) !== null) pushIfCompactable(m[1].trim());
   };
   for (const msg of messages) {
-    if (msg.role === "system" || msg.role === "developer") continue;
+    if (msg.role === "system" || msg.role === "developer" || hasCacheBreakpoint(msg)) continue;
     if (typeof msg.content === "string") scanText(msg.content);
     else if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -271,7 +289,8 @@ export function crushMessages(
     // carries the same kind of instructions/tool-schema content — compacting a JSON array
     // embedded there (e.g. an update_plan example) can corrupt the model's tool-calling
     // instructions (9router#2132: broke Codex CLI plan mode).
-    if (msg.role === "system" || msg.role === "developer") return { ...msg };
+    if (msg.role === "system" || msg.role === "developer" || hasCacheBreakpoint(msg))
+      return { ...msg };
 
     if (typeof msg.content === "string") {
       const crushed = crushText(msg.content, minRows);
