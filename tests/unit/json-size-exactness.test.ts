@@ -138,6 +138,13 @@ test("string escaping matches byte for byte", () => {
   }
 });
 
+test("multi-megabyte strings retain exact escaping and surrogate counts", () => {
+  const plain = "ordinary agent history ".repeat(100_000);
+  exact(plain);
+  exact({ content: plain + NASTY_STRINGS.join("").repeat(1_000) });
+  exact(NASTY_STRINGS.join("").repeat(20_000));
+});
+
 test("non-plain values fall back to JSON.stringify for that subtree only", () => {
   exact({ when: new Date("2026-07-25T00:00:00.000Z") });
   exact({ custom: { toJSON: () => ({ replaced: "yes" }) } });

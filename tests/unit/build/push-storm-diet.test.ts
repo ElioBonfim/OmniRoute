@@ -39,7 +39,10 @@ for (const file of ["ci.yml", "quality.yml"]) {
       ["main"],
       `${file} must not run the matrix per release push`
     );
-    assert.deepEqual(on.pull_request?.branches, ["main", "release/**"]);
+    assert.deepEqual(
+      on.pull_request?.branches,
+      file === "ci.yml" ? ["main", "release/**", "primage/production-*"] : ["main", "release/**"]
+    );
     assert.ok(on.merge_group, `${file} keeps the merge-queue trigger`);
   });
 }

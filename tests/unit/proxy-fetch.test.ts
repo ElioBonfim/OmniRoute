@@ -214,6 +214,7 @@ test("the data-plane flag alone never bypasses the assigned proxy", async () => 
       OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "true",
     },
     async () => {
+      let calls = 0;
       let release: () => void = () => {};
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -221,6 +222,7 @@ test("the data-plane flag alone never bypasses the assigned proxy", async () => 
       const pending = runWithProxyContext(
         { type: "http", host: "127.0.0.1", port: "9" },
         async () => {
+          calls++;
           await gate;
           return "direct-data-ok";
         }
@@ -231,6 +233,8 @@ test("the data-plane flag alone never bypasses the assigned proxy", async () => 
         (error: Error & { code?: string }) => error.code === "PROXY_UNREACHABLE"
       );
       release();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls, 1, "fast-fail must not repeat the callback through direct egress");
     }
   );
 });

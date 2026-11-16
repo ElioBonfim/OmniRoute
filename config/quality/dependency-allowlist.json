@@ -1,6 +1,7 @@
 {
   "_comment": "Allowlist anti-slopsquatting (check-deps.mjs). Toda dep nova exige adicao EXPLICITA aqui apos verificar que e legitima.",
   "_justifications": {
+    "@types/turndown": "DefinitelyTyped typings for the existing turndown runtime dependency, exact 5.0.6. Official DefinitelyTyped/DefinitelyTyped repository and Microsoft types publisher verified; development only.",
     "@agentclientprotocol/sdk": "Official Agent Client Protocol TypeScript SDK (agentclientprotocol/typescript-sdk, Apache-2.0). Exact 1.4.0 registry tarball and integrity verified for the registered native Gemini ACP launcher.",
     "@fontsource/ibm-plex-mono": "Self-hosted Keak type ramp for the vendored CI UI Kit (fontsource, OFL fonts; same no-CDN reasoning as Material Symbols #3695). KEA-7886 — CI UI Kit runtime dependency.",
     "@fontsource/instrument-serif": "Self-hosted Keak type ramp for the vendored CI UI Kit (fontsource, OFL fonts; same no-CDN reasoning as Material Symbols #3695). KEA-7886 — CI UI Kit runtime dependency.",
@@ -75,6 +76,7 @@
     "@types/react",
     "@types/react-dom",
     "@types/safe-regex",
+    "@types/turndown",
     "@types/ws",
     "@vitejs/plugin-react",
     "@xyflow/react",
