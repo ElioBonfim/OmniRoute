@@ -16,22 +16,25 @@ const lossyProfile: DerivedPlan = {
   ],
 };
 
-test("an explicitly selected active profile is honored without a client header", () => {
-  assert.equal(applyLossyRequestPolicy(lossyProfile, null), lossyProfile);
-  assert.equal(applyLossyRequestPolicy(lossyProfile, "  "), lossyProfile);
+test("an active profile still needs request opt-in for lossy engines", () => {
+  for (const header of [null, "  "]) {
+    const plan = applyLossyRequestPolicy(lossyProfile, header);
+    assert.deepEqual(plan.stackedPipeline, SAFE_DEFAULT_PIPELINE);
+    assert.equal(plan.source, "active-profile");
+  }
 });
 
 for (const source of ["default", "auto-trigger", "routing-override"] as const) {
   test(`${source} still requires request opt-in for lossy engines`, () => {
     const plan = applyLossyRequestPolicy({ ...lossyProfile, source }, null);
-    assert.deepEqual(plan.stackedPipeline, [{ engine: "session-dedup" }, { engine: "lite" }]);
+    assert.deepEqual(plan.stackedPipeline, SAFE_DEFAULT_PIPELINE);
   });
 }
 
 for (const header of ["safe", "default", "off", "unknown-profile", " SAFE "]) {
   test(`an active profile does not override the client header ${header}`, () => {
     const plan = applyLossyRequestPolicy(lossyProfile, header);
-    assert.deepEqual(plan.stackedPipeline, [{ engine: "session-dedup" }, { engine: "lite" }]);
+    assert.deepEqual(plan.stackedPipeline, SAFE_DEFAULT_PIPELINE);
   });
 }
 

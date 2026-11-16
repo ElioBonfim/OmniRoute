@@ -10,6 +10,7 @@
   },
   "include": [],
   "files": [
+    "src/types/turndown-plugin-gfm.d.ts",
     "src/app/api/settings/proxy/test/route.ts",
     "src/app/(dashboard)/dashboard/batch/batch-utils.ts",
     "src/lib/batches/types.ts",

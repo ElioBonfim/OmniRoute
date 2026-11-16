@@ -44,6 +44,7 @@ type ProxyResolutionResult = {
   level: string;
   levelId: string | null;
   source?: string;
+  strategy?: string;
 };
 // State observed when a resolution started; an entry is stored only if it still holds.
 type ProxyResolutionStamp = {
@@ -619,6 +620,7 @@ function isCachedPoolMemberDue(
   connectionId: string
 ): boolean {
   const { result } = entry;
+  if (result.strategy === "failover") return true;
   if (result.source !== "registry" || result.proxy == null) return false;
   const row = db
     .prepare("SELECT provider FROM provider_connections WHERE id = ?")

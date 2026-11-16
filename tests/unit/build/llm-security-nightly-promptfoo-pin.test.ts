@@ -13,11 +13,14 @@
 // the step pulled `promptfoo@latest` from the network, and the devDependency floated on
 // `^0.123.0`. The lockfile install is not usable either (#17017: a nested js-yaml 4.3.2
 // breaks the in-repo promptfoo at import). Contract pinned here: the step runs an exact,
-// network-isolated `npx --yes promptfoo@X.Y.Z`, that version equals the exact devDependency
-// pin, the lockfile agrees with it, and it is not one of the releases proven broken.
+// isolated `npx --yes promptfoo@X.Y.Z`, that version equals the exact devDependency
+// pin, and the lockfile agrees with it. Since 0.125.1 the config wraps the structured
+// guard error as output; it still checks both HTTP 400 and SECURITY_001. The raw JSON
+// transform reproduces the classifier bug even in 0.125.1.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { Script } from "node:vm";
 import * as yaml from "js-yaml";
 
 interface Step {
@@ -98,4 +101,28 @@ test("pinned promptfoo is not a release proven to error on the guard's 4xx JSON 
     !KNOWN_BROKEN.has(declared),
     `promptfoo ${declared} errors with "result?.error?.includes is not a function" on blocked requests`
   );
+});
+
+test("guard output preserves HTTP status and structured error without marking it as a provider failure", () => {
+  const config = yaml.load(read("promptfooconfig.yaml")) as {
+    providers: Array<{ config: { transformResponse: string } }>;
+    tests: Array<{ assert: Array<{ value: string }> }>;
+  };
+  const transform = new Script(config.providers[0].config.transformResponse);
+  const blocked = { error: { code: "SECURITY_001", message: "blocked" } };
+  const result = transform.runInNewContext(
+    { json: blocked, context: { response: { status: 400 } } },
+    { timeout: 1_000 }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { output: { status: 400, body: blocked } });
+  assert.ok(!Object.hasOwn(result, "error"));
+  for (const entry of config.tests) {
+    const assertion = new Script(entry.assert[0].value);
+    const evaluate = (output: unknown) => assertion.runInNewContext({ output }, { timeout: 1_000 });
+    assert.equal(evaluate(result.output), true);
+    assert.equal(evaluate(JSON.stringify(result.output)), true);
+    assert.equal(evaluate({ status: 200, body: blocked }), false);
+    assert.equal(evaluate({ status: 500, body: blocked }), false);
+    assert.equal(evaluate({ status: 400, body: { error: { code: "UNRELATED" } } }), false);
+  }
 });

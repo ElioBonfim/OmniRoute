@@ -467,6 +467,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@types/safe-regex": "^1.1.6",
+    "@types/turndown": "5.0.6",
     "@types/ws": "^8.18.0",
     "@vitejs/plugin-react": "^6.1.0",
     "babel-plugin-react-compiler": "^1.0.0",
@@ -501,7 +502,7 @@
     "opencode-ai": "1.18.34",
     "playwright-ctrf-json-reporter": "^0.1.0",
     "prettier": "^3.9.6",
-    "promptfoo": "0.123.0",
+    "promptfoo": "0.125.1",
     "size-limit": "^14.1.0",
     "subset-font": "^2.9.0",
     "tailwindcss": "^4.3.0",
@@ -621,6 +622,9 @@
     "monaco-editor": {
       "dompurify": "^3.4.17"
     },
-    "csv-parse": "^7.0.2"
+    "csv-parse": "^7.0.2",
+    "get-uri": {
+      "basic-ftp": "^6.2.4"
+    }
   }
 }

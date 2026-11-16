@@ -1,12 +1,9 @@
 // tests/unit/extract-zip-14482-exposure.test.ts
 // Probe for issue #14482 — extract-zip GHSA-7pqw-9j4j-h8q3 / GHSA-jmr9-qjv8-65gv.
 //
-// This is NOT a functional-bug repro (there is no OmniRoute code path that calls the
-// vulnerable npm package). It is a reachability/exposure proof: it asserts the two
-// premises the triage relies on to call this "accepted risk, doc-only fix" rather than
-// "code bug, needs a patch":
-//   1. extract-zip is reachable ONLY through the promptfoo (devDependency) ->
-//      @openai/codex-security chain — never through a production dependency.
+// The promptfoo update removed the former dev-only @openai/codex-security chain.
+// Keep the stronger regression guard: neither package may return to the lockfile.
+//   1. extract-zip and @openai/codex-security are absent from the dependency tree.
 //   2. OmniRoute's own source (src/, open-sse/, bin/, electron/ *code*, not its
 //      package-lock.json) never imports the "extract-zip" npm package directly.
 // If either assertion ever breaks (e.g. a future PR adds extract-zip as a direct or
@@ -53,7 +50,7 @@ function declaredDependents(lock: Lockfile, depName: string): string[] {
   return dependents;
 }
 
-test("extract-zip (GHSA-7pqw-9j4j-h8q3 / GHSA-jmr9-qjv8-65gv) is reachable only via the promptfoo devDependency chain", () => {
+test("extract-zip (GHSA-7pqw-9j4j-h8q3 / GHSA-jmr9-qjv8-65gv) stays absent after the promptfoo update", () => {
   const lock = readLockfile();
   const root = lock.packages?.[""] ?? {};
 
@@ -67,21 +64,27 @@ test("extract-zip (GHSA-7pqw-9j4j-h8q3 / GHSA-jmr9-qjv8-65gv) is reachable only 
     "root project must not depend on extract-zip directly (dev)"
   );
 
-  // 2. Exactly one package in the whole tree declares a dependency on extract-zip,
-  //    and it must be @openai/codex-security.
+  // 2. No package may restore the former extract-zip dependency edge.
   const extractZipDependents = declaredDependents(lock, "extract-zip");
   assert.deepEqual(
     extractZipDependents,
-    ["node_modules/@openai/codex-security"],
-    `expected only @openai/codex-security to depend on extract-zip, got: ${extractZipDependents.join(", ")}`
+    [],
+    `expected no extract-zip dependents, got: ${extractZipDependents.join(", ")}`
   );
 
-  // 3. The only thing that depends on @openai/codex-security must be promptfoo.
+  // 3. The removed codex-security chain must not return either.
   const codexSecurityDependents = declaredDependents(lock, "@openai/codex-security");
   assert.deepEqual(
     codexSecurityDependents,
-    ["node_modules/promptfoo"],
-    `expected only promptfoo to depend on @openai/codex-security, got: ${codexSecurityDependents.join(", ")}`
+    [],
+    `expected no codex-security dependents, got: ${codexSecurityDependents.join(", ")}`
+  );
+  assert.deepEqual(
+    Object.keys(lock.packages ?? {}).filter((key) =>
+      /(?:^|\/)node_modules\/(?:extract-zip|@openai\/codex-security)$/.test(key)
+    ),
+    [],
+    "removed vulnerable packages must not remain as orphaned lock entries"
   );
 
   // 4. promptfoo itself must be a devDependency, never a production dependency —

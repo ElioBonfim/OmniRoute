@@ -20,8 +20,8 @@ test("QuotaCardHeader derives token expiry only for OAuth connections with a kno
   assert.match(source, /connection\.authType === "oauth"/, "must gate on oauth auth type");
   assert.match(
     source,
-    /connection\.tokenExpiresAt \|\| connection\.expiresAt/,
-    "must read tokenExpiresAt with expiresAt fallback"
+    /connection\.expiresAt \|\| connection\.tokenExpiresAt/,
+    "must prefer the current expiry over the legacy alias"
   );
   assert.match(source, /formatCountdown\(/, "must format the countdown");
 });

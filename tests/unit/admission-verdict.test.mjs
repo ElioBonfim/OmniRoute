@@ -330,7 +330,10 @@ for (const profile of ["ci", "quality"]) {
       verdict.if,
       /^\$\{\{ always\(\) && !\(github\.event_name == 'pull_request' && github\.event\.action == 'edited' && github\.event\.pull_request\.user\.login == 'mergify\[bot\]' && /
     );
-    assert.deepEqual(workflow.on.pull_request.branches, ["main", "release/**"]);
+    assert.deepEqual(
+      workflow.on.pull_request.branches,
+      profile === "ci" ? ["main", "release/**", "primage/production-*"] : ["main", "release/**"]
+    );
     // Push runs only for main since 2026-10-18: each change already ran the matrix on its
     // PR and Release-Green validates the merged combination on release/** (the per-push
     // runs there were cancelled by the next merge, 24 of 24 in a day, while holding up to

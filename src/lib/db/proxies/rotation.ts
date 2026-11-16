@@ -22,6 +22,7 @@ import {
   isProxyPoolSharedEgressOrderEnabled,
 } from "@/shared/utils/featureFlags";
 import { getCachedProxyHealth } from "@/lib/proxyHealth";
+import { getProxyFailoverMonitor, ProxyFailoverUnavailableError } from "@/lib/proxyHealth/failover";
 import { getRecentEgressIpForProxy, getRecentEgressIpsForProxy } from "../proxyLogs";
 import { egressKeyForAddresses, normalizeEgressAddress } from "@/shared/network/egressAddress";
 import { readOperatorEgressForMember } from "../proxyOperatorEgress";
@@ -777,18 +778,27 @@ export const PROXY_ALIVE_PREDICATE =
 // Returns the standard registry resolution shape, or null when the pool is empty
 // or every member is dead (preserving the #6246 fail-closed contract — a dead
 // pool never falls through to direct egress; the caller's guard blocks it).
-function resolveScopePoolInternal(
+async function resolveScopePoolInternal(
   db: ReturnType<typeof getDbInstance>,
   scope: ProxyScope,
   levelId: string | null,
   options: { rotationScopeId: string; matchAnyScopeId?: boolean; scopeIdFilter?: string | null }
-): ReturnType<typeof toRegistryProxyResolution> | null {
+): Promise<
+  (ReturnType<typeof toRegistryProxyResolution> & { strategy?: ProxyRotationStrategy }) | null
+> {
+  const strategy = await getScopeRotationStrategy(scope, levelId);
   const rows = fetchAlivePoolRows(
     db,
     scope,
     options.scopeIdFilter ?? null,
     options.matchAnyScopeId === true
   );
+  if (strategy === "failover") {
+    if (rows.length === 0 && (await getScopeProxyPool(scope, levelId)).length === 0) return null;
+    const picked = await getProxyFailoverMonitor().select(rows);
+    if (!picked) throw new ProxyFailoverUnavailableError();
+    return { ...toRegistryProxyResolution(picked, scope, levelId), strategy };
+  }
   if (rows.length === 0) return null;
   const picked = pickFromCandidates(
     db,
@@ -832,7 +842,7 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
   try {
     const db = getDbInstance();
 
-    const account = resolveScopePoolInternal(db, "account", connectionId, {
+    const account = await resolveScopePoolInternal(db, "account", connectionId, {
       rotationScopeId: connectionId,
       scopeIdFilter: connectionId,
     });
@@ -843,14 +853,14 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
       .get(connectionId) as { provider?: string } | undefined;
 
     if (connection?.provider) {
-      const provider = resolveScopePoolInternal(db, "provider", connection.provider, {
+      const provider = await resolveScopePoolInternal(db, "provider", connection.provider, {
         rotationScopeId: connection.provider,
         scopeIdFilter: connection.provider,
       });
       if (provider) return provider;
     }
 
-    const global = resolveScopePoolInternal(db, "global", null, {
+    const global = await resolveScopePoolInternal(db, "global", null, {
       rotationScopeId: normalizeRotationScopeId("global", null),
       matchAnyScopeId: true,
     });
@@ -870,7 +880,7 @@ export async function resolveProxyForScopeFromRegistry(scope: string, scopeId?: 
     const normalizedScope = normalizeScope(scope);
 
     if (normalizedScope === "global") {
-      return resolveScopePoolInternal(db, "global", null, {
+      return await resolveScopePoolInternal(db, "global", null, {
         rotationScopeId: normalizeRotationScopeId("global", null),
         matchAnyScopeId: true,
       });
@@ -879,7 +889,7 @@ export async function resolveProxyForScopeFromRegistry(scope: string, scopeId?: 
     const normalizedScopeId = scopeId || null;
     if (!normalizedScopeId) return null;
 
-    return resolveScopePoolInternal(db, normalizedScope, normalizedScopeId, {
+    return await resolveScopePoolInternal(db, normalizedScope, normalizedScopeId, {
       rotationScopeId: normalizeRotationScopeId(normalizedScope, normalizedScopeId),
       scopeIdFilter: normalizedScopeId,
     });

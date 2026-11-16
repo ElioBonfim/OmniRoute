@@ -94,8 +94,11 @@ export async function persistConnectionTestHealth({
   if (result.refreshed && result.newTokens && !isPassiveCodex(provider)) {
     updateData.accessToken = result.newTokens.accessToken;
     if (result.newTokens.refreshToken) updateData.refreshToken = result.newTokens.refreshToken;
-    if (result.newTokens.expiresIn)
-      updateData.expiresAt = new Date(Date.now() + result.newTokens.expiresIn * 1000).toISOString();
+    if (result.newTokens.expiresIn) {
+      const expiresAt = new Date(Date.now() + result.newTokens.expiresIn * 1000).toISOString();
+      updateData.expiresAt = expiresAt;
+      updateData.tokenExpiresAt = expiresAt;
+    }
   }
   const saved = await persist(connectionId, updateData);
   // A connection deleted mid-test (persist → null) keeps the release flow (no throw), but it

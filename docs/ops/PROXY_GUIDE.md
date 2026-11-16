@@ -730,41 +730,63 @@ When multiple proxies are assigned to a scope, OmniRoute uses a **rotation strat
 
 ### Available Strategies
 
-| Strategy            | When to use                           | Trade-off                                             |
-| ------------------- | ------------------------------------- | ----------------------------------------------------- |
-| `quality` (default) | Production with mixed-quality proxies | Favors high-rated proxies; may starve low-rated ones  |
-| `random`            | Load distribution, privacy            | Even distribution; ignores quality signals            |
-| `sequential`        | Debugging, deterministic testing      | Cycles through proxies in order; easy to reason about |
+These strategies apply to native registry scope pools. Marketplace quality scores
+are managed separately.
 
-### Decision Tree
+| Strategy                | Behavior                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `round-robin` (default) | Advances through available members in assignment order.                       |
+| `random`                | Chooses an available member randomly.                                         |
+| `sticky`                | Keeps a member for the configured time window, then rotates.                  |
+| `latency`               | Chooses using recorded latency.                                               |
+| `failover`              | Uses the first healthy member in assignment order; later members are backups. |
 
+### Primary and backup proxies
+
+The `failover` strategy uses assignment `position` as priority. Add the primary
+before its backups with `PUT /api/settings/proxies/pool`, using the same `scope`
+and `scopeId` for every member. A proxy assigned only to the global pool does not
+become a backup for a separate account pool.
+
+After confirming the members with `GET /api/settings/proxies/pool?scope=account&scopeId=<connection-id>`,
+set the strategy through the authenticated management API:
+
+```http
+PATCH /api/settings/proxies/pool
+Content-Type: application/json
+
+{"scope":"account","scopeId":"<connection-id>","strategy":"failover"}
 ```
-                    Do you have quality scores for your proxies?
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-       YES                     NO
-        │                       │
-   Are all proxies             │
-   roughly equal                  │
-   in quality?                   │
-        │                       │
-   ┌────┴────┐                  │
-   │         │                  │
-  YES       NO                Use
-   │         │              `random`
-   │         │              (even spread
-   │         │              builds quality
-   │         │              data over time)
-   │         │
-   │    Use `quality`
-   │    (best for
-   │    mixed quality)
-   │
-Use `random`
-(spread load
-evenly)
-```
+
+The first resolution probes the members before selecting one. While a pool is
+in use, a background monitor checks forwarding every 10 seconds, with at most
+two simultaneous probes per batch. Each probe sends a HEAD request through the
+configured HTTP, HTTPS, or SOCKS5 proxy to `https://www.gstatic.com/generate_204`
+and requires HTTP 204 within five seconds. Relay proxy types are not supported
+by this strategy.
+
+Two consecutive failures make a member unavailable. Three consecutive successes
+restore a failed member. The first healthy member always wins, so recovery of
+the primary returns new requests to it. Existing requests and streams are never
+replayed by this monitor.
+
+The monitor pauses after a minute without resolutions and resumes on demand.
+Recovery counters remain in memory while paused. Health state is shared across
+route bundles, resets on process restart, and never deletes or disables registry
+entries. Build processes and `OMNIROUTE_DISABLE_BACKGROUND_SERVICES` suppress the
+background timer; on-demand checks still work.
+
+When an assigned failover pool has no healthy member, resolution throws
+`PROXY_FAILOVER_UNAVAILABLE` with status 503. It does not continue into another
+scope or a direct connection. This also blocks chat's `PROXY_FAIL_OPEN` escape
+for that error and prevents direct retries of provider-limit reads selected
+through a failover pool. An explicitly disabled proxy setting retains its
+existing meaning.
+
+Before activating production, test both proxies from the gateway host. Exercise
+primary failure, backup selection, primary recovery, and simultaneous failure
+in an isolated environment. To roll back, assign the known-good primary alone
+and restore the scope's previous strategy before rolling back the server image.
 
 ## Automatic Failure Exclusion for Your Own Proxies
 

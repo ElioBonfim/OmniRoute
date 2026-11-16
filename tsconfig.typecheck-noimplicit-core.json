@@ -10,6 +10,7 @@
   },
   "include": [],
   "files": [
+    "src/types/turndown-plugin-gfm.d.ts",
     "src/types/sqljs.d.ts",
     "src/app/api/settings/proxy/test/route.ts",
     "src/lib/db/apiKeys.ts",

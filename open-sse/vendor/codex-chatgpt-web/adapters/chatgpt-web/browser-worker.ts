@@ -1,6 +1,10 @@
 import { recordFinishedOwnedConversation } from "./owned-conversations";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
-import { assertChatGptModelFamily, selectChatGptModelFamily, throwIfChatGptProUsageLimited } from "./model-selection";
+import {
+  assertChatGptModelFamily,
+  selectChatGptModelFamily,
+  throwIfChatGptProUsageLimited,
+} from "./model-selection";
 import {
   releasePersistentChatGptPage,
   openChatGptContext,
@@ -16,13 +20,8 @@ import {
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
-import {
-  chromium,
-  type Browser,
-  type BrowserContext,
-  type Locator,
-  type Page,
-} from "playwright-core";
+import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
+import { loadPlaywrightCore } from "../../../../utils/optionalPlaywrightCore.ts";
 import {
   atomicWriteFile,
   CHATGPT_CONNECTOR_NAME,
@@ -1899,6 +1898,7 @@ export class ChatGptBrowserWorker {
         `Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`
       );
     }
+    const { chromium } = await loadPlaywrightCore();
     this.browser = this.config.cdpEndpoint
       ? await chromium.connectOverCDP(this.config.cdpEndpoint, { noDefaults: true })
       : await chromium.launch({
@@ -1954,6 +1954,7 @@ export class ChatGptBrowserWorker {
           `Configured Chrome executable does not exist: ${this.config.chromeExecutablePath}`
         );
       }
+      const { chromium } = await loadPlaywrightCore();
       const browser = this.config.cdpEndpoint
         ? await chromium.connectOverCDP(this.config.cdpEndpoint, { noDefaults: true })
         : await chromium.launch({
@@ -4859,7 +4860,11 @@ export class ChatGptBrowserWorker {
       let capturedResponse = false;
       const sentAt = Date.now();
       const visibleTrace = new ChatGptVisibleTraceTracker();
-      const markdownBuffer = new ChatGptMarkdownBuffer(undefined, undefined, turn.compaction ? "complete" : "stream");
+      const markdownBuffer = new ChatGptMarkdownBuffer(
+        undefined,
+        undefined,
+        turn.compaction ? "complete" : "stream"
+      );
       const checkpointStream = turn.captureLunaCheckpoint
         ? new ChatGptLunaCheckpointStream()
         : undefined;

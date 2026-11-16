@@ -23,29 +23,25 @@ const BASE64_DATA_URI_RE = /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 /** Length of a JSON-encoded string, including the surrounding quotes. */
 export function encodedStringLength(value: string, stripBase64 = false): number {
   const target = stripBase64 ? value.replace(BASE64_DATA_URI_RE, "") : value;
-  let len = 2; // the quotes
-  for (let i = 0; i < target.length; i++) {
-    const code = target.charCodeAt(i);
-    if (code === 0x22 || code === 0x5c) {
-      len += 2; // \" and \\
-    } else if (code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) {
-      len += 2; // \b \t \n \f \r
-    } else if (code < 0x20) {
-      len += 6; // \u00XX
-    } else if (code >= 0xd800 && code <= 0xdfff) {
-      // Surrogates: a well-formed pair serializes as its two code units (2 chars); a LONE
-      // surrogate is escaped as \uXXXX since ES2019 well-formed JSON.stringify.
+  let len = target.length + 2;
+  // Let V8 scan ordinary text natively. Only JSON escapes and surrogate code units
+  // need JavaScript work, even for multi-megabyte agent histories under coverage.
+  const special = /["\\\u0000-\u001f\ud800-\udfff]/g;
+  for (let match = special.exec(target); match; match = special.exec(target)) {
+    const code = target.charCodeAt(match.index);
+    if (code >= 0xd800) {
       const isHigh = code <= 0xdbff;
-      const next = isHigh ? target.charCodeAt(i + 1) : NaN;
+      const next = isHigh ? target.charCodeAt(match.index + 1) : NaN;
       const paired = isHigh && next >= 0xdc00 && next <= 0xdfff;
       if (paired) {
-        len += 2;
-        i++; // consume the low surrogate
+        special.lastIndex++; // the baseline already counted both code units
       } else {
-        len += 6;
+        len += 5; // one code unit becomes six JSON characters
       }
+    } else if (code < 0x20 && ![0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(code)) {
+      len += 5;
     } else {
-      len += 1;
+      len += 1; // quotes, backslashes and short control escapes gain one character
     }
   }
   return len;

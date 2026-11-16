@@ -207,50 +207,66 @@ test("runWithProxyContext degrades to a direct connection when directFallbackOnU
   });
 });
 
-test("runWithProxyContext uses direct egress when the data-plane fallback flag is enabled", async () => {
+test("the data-plane flag alone never bypasses the assigned proxy", async () => {
   await withEnv(
     {
       OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false",
       OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "true",
     },
     async () => {
-      let ran = false;
-      const result = await runWithProxyContext(
+      let calls = 0;
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const pending = runWithProxyContext(
         { type: "http", host: "127.0.0.1", port: "9" },
         async () => {
-          ran = true;
+          calls++;
+          await gate;
           return "direct-data-ok";
         }
       );
 
-      assert.equal(ran, true, "callback must run once through direct egress");
-      assert.equal(result, "direct-data-ok");
+      await assert.rejects(
+        pending,
+        (error: Error & { code?: string }) => error.code === "PROXY_UNREACHABLE"
+      );
+      release();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls, 1, "fast-fail must not repeat the callback through direct egress");
     }
   );
 });
 
 test("runWithProxyContext keeps strict pinning when the direct fallback feature flag is off", async () => {
-  await withEnv({ OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false", OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "false" }, async () => {
-    // #9100: with the flag off the request goes through the non-blocking T14
-    // probe; keep it in flight so the unreachable probe aborts it (strict
-    // pinning — no direct fallback — still applies).
-    let releaseRequest: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      releaseRequest = resolve;
-    });
+  await withEnv(
+    {
+      OMNIROUTE_CONTROL_PLANE_PROXY_DIRECT_FALLBACK: "false",
+      OMNIROUTE_DATA_PLANE_PROXY_DIRECT_FALLBACK: "false",
+    },
+    async () => {
+      // #9100: with the flag off the request goes through the non-blocking T14
+      // probe; keep it in flight so the unreachable probe aborts it (strict
+      // pinning — no direct fallback — still applies).
+      let releaseRequest: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseRequest = resolve;
+      });
 
-    const pending = runWithProxyContext(
-      { type: "http", host: "127.0.0.1", port: "9" },
-      async () => {
-        await gate;
-        return "unreachable";
-      },
-      { directFallbackOnUnreachable: true }
-    );
+      const pending = runWithProxyContext(
+        { type: "http", host: "127.0.0.1", port: "9" },
+        async () => {
+          await gate;
+          return "unreachable";
+        },
+        { directFallbackOnUnreachable: true }
+      );
 
-    await assert.rejects(pending, /Proxy unreachable/);
-    releaseRequest();
-  });
+      await assert.rejects(pending, /Proxy unreachable/);
+      releaseRequest();
+    }
+  );
 });
 
 test("runWithProxyContextOrDirect runs the callback directly when the proxy is unreachable", async () => {

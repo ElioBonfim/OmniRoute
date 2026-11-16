@@ -200,7 +200,7 @@ const EXPECTED: Record<InventoryKind, Record<string, number>> = {
     // #15130: the connection test re-reads the row uncached right before its write so an
     // operator disable that landed mid-probe is honored — a state re-read of the connection
     // under test, never a connection selection (class C).
-    "src/app/api/providers/[id]/test/route.ts": 1,
+    "src/app/api/providers/[id]/test/route.ts": 2,
     "src/app/api/providers/bulk/route.ts": 1,
     "src/app/api/providers/client/route.ts": 1,
     "src/app/api/providers/free-onboarding/route.ts": 2,
@@ -297,7 +297,9 @@ const EXPECTED: Record<InventoryKind, Record<string, number>> = {
     // #15891: after a successful refresh, getRefreshRecoveryUpdate() re-reads the row's
     // rateLimitedUntil so it does not clear an active cooldown's diagnostics — a state
     // read, not connection selection or dispatch, class C like its siblings (3 -> 4).
-    "src/lib/tokenHealthCheck.ts": 4,
+    // Fresh pre-check state and the post-refresh credential read are class-C
+    // state reads for the same connection, without selecting another account.
+    "src/lib/tokenHealthCheck.ts": 6,
     "src/lib/tokenHealthCheckCopilot.ts": 1,
     // Selective provider-account transfer: one read of every connection to build the
     // catalog, the export selection and the import match set. Read-only state, no dispatch.
